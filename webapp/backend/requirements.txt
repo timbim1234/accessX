@@ -1,0 +1,9 @@
+# Backend-vereisten voor de accessX-testomgeving.
+#
+# Belangrijk: accessx zelf is EDITABLE geïnstalleerd in de venv
+# (C:/Users/tim/.venvs/accessx) vanuit de repo-root:
+#     pip install -e <repo-root>
+# Die installatie levert ook geopandas, osmnx, networkx, tobler, h3 enz.
+fastapi
+uvicorn[standard]
+httpx  # nodig voor fastapi.testclient in test_smoke.py

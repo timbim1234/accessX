@@ -1,0 +1,26 @@
+/* Visualisatie-tokens uit CONTRACT.md (light mode, expliciet). */
+:root {
+  color-scheme: light;
+
+  --surface: #fcfcfb;
+  --page: #f9f9f7;
+  --ink: #0b0b0b;
+  --ink-secondary: #52514e;
+  --ink-muted: #898781;
+  --gridline: #e1e0d9;
+  --hairline: rgba(11, 11, 11, 0.1);
+
+  /* Sequentiële choropleth-ramp (licht -> donker = laag -> hoog) */
+  --ramp-1: #cde2fb;
+  --ramp-2: #6da7ec;
+  --ramp-3: #2a78d6;
+  --ramp-4: #1c5cab;
+  --ramp-5: #0d366b;
+
+  --accent: #2a78d6;
+  --warn-text: #a04d0b;
+  --error-text: #b42318;
+  --ok: #008300;
+
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
