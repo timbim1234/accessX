@@ -42,8 +42,8 @@ De venv is aangemaakt met: `python -m venv C:\Users\tim\.venvs\accessx` gevolgd 
 | Stap | accessX-functie | Data |
 |---|---|---|
 | Hexgrid | `make_hex_grid` (H3, res 8–10) | — |
-| Netwerk | `build_network` + `add_time_cost_constant_speed` | OSM (OSMnx, gecachet in `%LOCALAPPDATA%\accessx_webapp_cache`) |
-| Voorzieningen | eigen gecombineerde Overpass-query (`fetch_pois_combined` in `analysis.py`), zelfde categorisering als `get_pois_osm`; valt bij fouten terug op `get_pois_osm` | OSM Overpass (1 query voor alle groepen, ~15 s i.p.v. minuten) |
+| Netwerk | lokale extract (`local_osm.build_graph_local`, pariteit met `build_network`, `simplify=False`); terugval op OSMnx/Overpass buiten dekking | lokale NL-parquet (zie hieronder) |
+| Voorzieningen | lokale extract (`local_osm.load_pois_local`) → gecombineerde Overpass-query (`fetch_pois_combined`) → `get_pois_osm` | lokale NL-parquet; anders OSM Overpass |
 | Bevolking | `map_population_grid_to_hexes` | CBS 100 m-grid (`data/nl_cbs/…`, lokaal, incl. leeftijdsgroepen) |
 | Tellen | `count_accessible_pois` | — |
 | Dichtstbijzijnde | `compute_nearest_poi_cost` | — |
@@ -52,20 +52,40 @@ De venv is aangemaakt met: `python -m venv C:\Users\tim\.venvs\accessx` gevolgd 
 | Verdeling | `calculate_lorenz` (Gini) + `compute_sufficientarian_score` | — |
 | Isochronen | `calculate_isochrones` (on-demand per hex) | — |
 
+## Lokale OSM-extract (heel Nederland)
+
+Netwerk én voorzieningen komen uit lokale parquet-bestanden i.p.v. Overpass, dus
+een verse analyse draait overal in Nederland in seconden. Bestanden staan in
+`%LOCALAPPDATA%\accessx_webapp_cache\local_osm\` (edges/nodes/pois.parquet +
+meta.json), gegenereerd uit een Geofabrik-extract:
+
+```powershell
+# eenmalig / bij een data-update (heel NL, ~19 min, ~1 GB parquet):
+C:\Users\tim\.venvs\accessx\Scripts\python.exe prepare_local_data.py `
+  "$env:LOCALAPPDATA\accessx_webapp_cache\local_osm\netherlands-latest.osm.pbf"
+```
+
+`local_osm.build_graph_local` / `load_pois_local` filteren de parquet op de
+getekende polygoon (pyarrow bbox-pushdown). Buiten de dekking van de parquet valt
+de backend automatisch terug op OSMnx/Overpass. De lokale data is gebakken met de
+huidige `POI_GROUPS`; na een categorie-wijziging opnieuw preppen.
+
+Huidige extract: `netherlands-latest.osm.pbf` → 13,3M edges, 12M nodes, 159.624 POIs.
+
 ## Prestaties
 
-De drie datalaadstappen (netwerk, voorzieningen, CBS) draaien parallel; de
-voorzieningen komen met één gecombineerde Overpass-query binnen. Gemeten:
+De drie datalaadstappen (netwerk, voorzieningen, CBS) draaien parallel. Gemeten
+via het lokale pad:
 
-| Scenario | Totaal | Zwaarste stap |
-|---|---|---|
-| Vers gebied (3,4 km², 5 groepen) | ~1,5–4,5 min | OSM-netwerkdownload (Overpass, wisselend belast) |
-| Zelfde gebied opnieuw (cache) | ~20 s | analyses zelf (~10 s) |
-| POI-stap oud → nieuw | 550–780 s → **0,2–15 s** | — |
+| Scenario | Totaal | Netwerk | Voorzieningen |
+|---|---|---|---|
+| Vers gebied, overal in NL (3,4 km², 7 groepen) | ~15–20 s | ~6–9 s (lokaal) | ~0,05 s (lokaal) |
+| Buiten dekking (terugval Overpass) | ~1,5–4,5 min | OSM-download | 1 gecombineerde query |
+| POI-stap oud → lokaal | 550–780 s → **~0,05 s** | — | — |
 
-De resterende bottleneck is de OSM-netwerkdownload bij een vers gebied. Wil je
-dat ook structureel oplossen, gebruik dan een lokale OSM-extract (bijv.
-Geofabrik NL-pbf) of een voorgeladen landelijk netwerk i.p.v. Overpass.
+De resterende ~7 s netwerk-tijd zit in `ox.project_graph` + `to_undirected` op
+~25k knopen (pariteit met accessX). Voor productie in CityMaker kun je per
+gemeente/regio een voorgeprojecteerd netwerk cachen om ook dat weg te nemen.
 
 ## Bekende beperkingen (testomgeving)
 
