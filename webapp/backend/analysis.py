@@ -21,6 +21,8 @@ from shapely.geometry import mapping, shape
 
 import accessx as acx
 
+import local_osm
+
 # ---------------------------------------------------------------------------
 # Paths and settings
 # ---------------------------------------------------------------------------
@@ -58,9 +60,20 @@ POI_GROUPS: Dict[str, Dict[str, Any]] = {
         "label": "Onderwijs",
         "tags": {"amenity": ["school", "kindergarten"]},
     },
-    "open_space": {
-        "label": "Groen & spelen",
-        "tags": {"leisure": ["park", "playground", "garden"]},
+    "parken_natuur": {
+        "label": "Parken & natuur",
+        "tags": {
+            "leisure": ["park", "nature_reserve", "recreation_ground", "dog_park", "common"],
+            "landuse": ["recreation_ground", "village_green"],
+        },
+    },
+    "speeltuinen": {
+        "label": "Speeltuinen",
+        "tags": {"leisure": ["playground"]},
+    },
+    "volkstuinen": {
+        "label": "Volkstuinen & moestuinen",
+        "tags": {"landuse": ["allotments"]},
     },
     "public_transport": {
         "label": "OV-haltes",
@@ -89,7 +102,8 @@ DEFAULTS: Dict[str, Any] = {
         "daily_needs",
         "healthcare",
         "education",
-        "open_space",
+        "parken_natuur",
+        "speeltuinen",
         "public_transport",
     ],
     "analyses": ["counts", "nearest", "hansen", "population", "2sfca", "equity"],
@@ -417,26 +431,46 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
         """Build the network and add travel-time cost. Raises PipelineError (fatal)."""
         rep.start("network")
         t0 = time.perf_counter()
-        try:
-            g = acx.build_network(
-                aoi,
-                city_epsg=METRIC_EPSG,
-                buffer_m=buffer_m,
-                network_type=("walk" if mode == "walk" else "bike"),
-                undirected=(mode == "walk"),
-                simplify=False,
-            )
-        except Exception as exc:
-            raise PipelineError(
-                f"Straatnetwerk laden vanaf OpenStreetMap mislukt: {exc}"
-            ) from exc
+        net_type = "walk" if mode == "walk" else "bike"
+        detail_suffix = ""
+        g = None
+        # Prefer the local OSM extract (build_network parity, no Overpass); it
+        # buffers the AOI itself, so pass the unbuffered AOI + buffer_m.
+        if local_osm.local_data_available():
+            try:
+                g = local_osm.build_graph_local(
+                    aoi,
+                    buffer_m=buffer_m,
+                    network_type=net_type,
+                    city_epsg=METRIC_EPSG,
+                )
+                detail_suffix = ", lokale extract"
+            except Exception as exc:
+                warn(
+                    f"Lokale netwerk-extract mislukt ({exc}); terugval op Overpass."
+                )
+                g = None
+        if g is None:
+            try:
+                g = acx.build_network(
+                    aoi,
+                    city_epsg=METRIC_EPSG,
+                    buffer_m=buffer_m,
+                    network_type=net_type,
+                    undirected=(mode == "walk"),
+                    simplify=False,
+                )
+            except Exception as exc:
+                raise PipelineError(
+                    f"Straatnetwerk laden vanaf OpenStreetMap mislukt: {exc}"
+                ) from exc
         if g.number_of_nodes() == 0:
             raise PipelineError("Het straatnetwerk in dit gebied is leeg.")
         timings["network"] = time.perf_counter() - t0
         rep.done(
             "network",
             timings["network"],
-            f"{g.number_of_nodes()} knopen, {g.number_of_edges()} kanten",
+            f"{g.number_of_nodes()} knopen, {g.number_of_edges()} kanten{detail_suffix}",
         )
 
         rep.start("cost")
@@ -460,19 +494,33 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
             aoi_buf = aoi_m.copy()
             aoi_buf["geometry"] = aoi_buf.buffer(buffer_m)
             aoi_buf = aoi_buf.to_crs(4326)
-            try:
-                p = fetch_pois_combined(aoi_buf, selected)
-                detail_suffix = ", 1 gecombineerde query"
-            except Exception as exc:
-                warn(
-                    f"Gecombineerde POI-query mislukt ({exc}); "
-                    "terugval op accessx get_pois_osm (traag)."
-                )
-                p = acx.get_pois_osm(
-                    aoi_buf,
-                    poi_groups={k: POI_GROUPS[k]["tags"] for k in selected},
-                    show_progress=False,
-                )
+            # Source order: local extract -> one combined Overpass query ->
+            # accessx.get_pois_osm (slow). Warn on each fallback.
+            p = None
+            if local_osm.local_data_available():
+                try:
+                    p = local_osm.load_pois_local(aoi_buf, selected)
+                    detail_suffix = ", lokale extract"
+                except Exception as exc:
+                    warn(
+                        f"Lokale POI-extract mislukt ({exc}); "
+                        "terugval op gecombineerde Overpass-query."
+                    )
+                    p = None
+            if p is None:
+                try:
+                    p = fetch_pois_combined(aoi_buf, selected)
+                    detail_suffix = ", 1 gecombineerde query"
+                except Exception as exc:
+                    warn(
+                        f"Gecombineerde POI-query mislukt ({exc}); "
+                        "terugval op accessx get_pois_osm (traag)."
+                    )
+                    p = acx.get_pois_osm(
+                        aoi_buf,
+                        poi_groups={k: POI_GROUPS[k]["tags"] for k in selected},
+                        show_progress=False,
+                    )
             timings["pois"] = time.perf_counter() - t0
             found = p is not None and len(p) > 0
             per_group = {g: 0 for g in selected}

@@ -18,6 +18,7 @@ import pandas as pd
 from shapely.geometry import Point, shape
 
 import analysis
+import local_osm
 from main import app
 
 from fastapi.testclient import TestClient
@@ -102,6 +103,35 @@ def main() -> int:
         repaired.is_valid and repaired.area > 0,
         f"is_valid={repaired.is_valid}, area={repaired.area:.6g}",
     )
+
+    # --- lokale OSM-extract -------------------------------------------------
+    avail = local_osm.local_data_available()
+    check(
+        "local_osm.local_data_available() -> bool",
+        isinstance(avail, bool),
+        f"available={avail}",
+    )
+    if avail:
+        # Mini-bbox binnen provincie Utrecht (Utrecht-West).
+        mini = square(5.085, 52.0925, 0.005, 0.0025)
+        aoi_buf = gpd.GeoDataFrame(geometry=[shape(mini)], crs=4326)
+        try:
+            pois = local_osm.load_pois_local(
+                aoi_buf,
+                ["daily_needs", "healthcare", "education",
+                 "open_space", "public_transport"],
+            )
+            cols_ok = {"id", "name", "category"}.issubset(set(pois.columns))
+            crs_ok = pois.crs is not None and str(pois.crs).endswith("4326")
+            check(
+                "load_pois_local: GeoDataFrame met juiste kolommen (Utrecht-mini)",
+                isinstance(pois, gpd.GeoDataFrame) and cols_ok and crs_ok,
+                f"n={len(pois)}, cols={list(pois.columns)}, crs={pois.crs}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            check("load_pois_local: geen fout", False, repr(exc))
+    else:
+        print("SKIP local_osm data-checks — geen lokale data aanwezig")
 
     with TestClient(app) as client:
         # --- health ---------------------------------------------------------

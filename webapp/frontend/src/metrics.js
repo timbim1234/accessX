@@ -3,24 +3,47 @@
 // Sequentiële ramp uit CONTRACT.md (licht -> donker = laag -> hoog).
 export const RAMP = ["#cde2fb", "#6da7ec", "#2a78d6", "#1c5cab", "#0d366b"];
 
-// Categoriale POI-kleuren in VASTE volgorde van de presets-keys.
+// Categoriale reservekleuren (voor onbekende keys die niet in GROUP_COLORS staan).
 export const CAT_COLORS = [
-  "#2a78d6", // 1 blue
-  "#eb6834", // 2 orange
-  "#1baf7a", // 3 aqua
-  "#eda100", // 4 yellow
-  "#e87ba4", // 5 magenta
-  "#008300", // 6 green
-  "#4a3aa7", // 7 violet
-  "#e34948", // 8 red
+  "#2a78d6", // blue
+  "#eb6834", // orange
+  "#eda100", // yellow
+  "#e87ba4", // magenta
+  "#e34948", // red
+  "#4a3aa7", // violet
+  "#1baf7a", // aqua
+  "#008300", // green
 ];
 
-// Vaste kleur per groep-key, in de volgorde waarin de presets de keys leveren.
-// De kleur hoort bij de key en verandert nooit bij aan/uitzetten van groepen.
+// Vaste kleur per groep-key. De kleur hoort bij de key en verandert nooit bij
+// aan/uitzetten van groepen. De drie groen-categorieën delen een groene familie
+// (donker -> licht -> olijf) zodat ze als "groen, verschillende types" lezen;
+// de overige zes staan op eigen distincte tinten.
+export const GROUP_COLORS = {
+  daily_needs: "#2a78d6", // blauw
+  healthcare: "#eb6834", // oranje
+  education: "#eda100", // geel
+  parken_natuur: "#1b7837", // donkergroen
+  speeltuinen: "#66bd63", // middengroen
+  volkstuinen: "#a6761d", // olijf/moestuin
+  public_transport: "#e87ba4", // magenta
+  meeting: "#e34948", // rood
+  sports: "#4a3aa7", // violet
+  open_space: "#1b7837", // legacy (oude resultaten)
+};
+
+// Kleur-map voor de keys die de presets leveren: expliciete kleur waar bekend,
+// anders een reservekleur op volgorde van binnenkomst.
 export function groupColors(presets) {
   const map = {};
-  Object.keys(presets?.poi_groups || {}).forEach((key, i) => {
-    map[key] = CAT_COLORS[i % CAT_COLORS.length];
+  let fallback = 0;
+  Object.keys(presets?.poi_groups || {}).forEach((key) => {
+    if (GROUP_COLORS[key]) {
+      map[key] = GROUP_COLORS[key];
+    } else {
+      map[key] = CAT_COLORS[fallback % CAT_COLORS.length];
+      fallback += 1;
+    }
   });
   return map;
 }
