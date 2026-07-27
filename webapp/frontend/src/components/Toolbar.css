@@ -1,0 +1,249 @@
+/* ─── Tokens & wrapper ─────────────────────────────────────── */
+.toolbar {
+  --icon-size: 20px;
+  position: absolute;
+  bottom: var(--space-6);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+}
+
+/* ─── Pill bar ─────────────────────────────────────────────── */
+.toolbar__bar {
+  display: flex;
+  align-items: center;
+  width: fit-content;
+  height: 52px;
+  padding: 8px;
+  gap: 4px;
+  box-sizing: border-box;
+  background: var(--white);
+  border-radius: 48px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+/* ─── Button groups ────────────────────────────────────────── */
+.toolbar__group {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.toolbar__group--visual,
+.toolbar__group--draw,
+.toolbar__group--nav { width: auto; }
+
+/* ─── Base button ──────────────────────────────────────────── */
+.toolbar__btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  color: #101010;
+  transition: background 0.15s, color 0.15s;
+}
+.toolbar__btn:hover { background: var(--surface-clay); color: #101010; }
+.toolbar__btn--active { background: var(--lavender-20); color: var(--lavender-100); }
+.toolbar__btn--active:hover { background: var(--lavender-40); color: var(--lavender-100); }
+.toolbar__btn--drawing { background: var(--lavender-100); color: var(--white); }
+.toolbar__btn--drawing:hover { background: var(--lavender-80); color: var(--white); }
+.toolbar__btn--disabled { opacity: 0.35; cursor: not-allowed; }
+.toolbar__btn--disabled:hover { background: transparent; color: #101010; }
+
+/* ─── Hover tooltip pill (via data-tooltip attribuut) ──────── */
+.toolbar__btn[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--clay-100);
+  color: var(--white);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  font: var(--body);
+  letter-spacing: 0.03em;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.06);
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+  z-index: 1001;
+}
+.toolbar__btn[data-tooltip]:hover::after,
+.toolbar__btn[data-tooltip]:focus-visible::after { opacity: 1; }
+.toolbar__btn--active[data-tooltip]::after { display: none; }
+
+.toolbar__anchor[data-tooltip] { position: relative; }
+.toolbar__anchor[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--clay-100);
+  color: var(--white);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  font: var(--body);
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.06);
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+  z-index: 1001;
+}
+.toolbar__anchor[data-tooltip]:hover::after { opacity: 1; }
+.toolbar__anchor[data-tooltip]:has(.toolbar__btn--active)::after { display: none; }
+
+/* ─── Basemap thumbnail-knop ───────────────────────────────── */
+.toolbar__btn--thumb {
+  padding: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 2px solid var(--clay-20);
+  background: var(--surface-clay);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.toolbar__btn--thumb:hover {
+  border-color: var(--clay-60);
+  box-shadow: 0 0 0 3px var(--clay-20);
+  background: var(--surface-clay);
+}
+.toolbar__btn--thumb.toolbar__btn--active {
+  border-color: var(--lavender-100);
+  box-shadow: 0 0 0 3px var(--lavender-20);
+}
+.toolbar__thumb-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.toolbar__thumb-placeholder {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-clay);
+  color: var(--clay-60);
+  font-size: var(--icon-size);
+}
+
+/* ─── Anchor & divider ─────────────────────────────────────── */
+.toolbar__anchor {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.toolbar__divider { width: 1px; height: 20px; background: var(--clay-20); flex-shrink: 0; }
+
+/* ─── Actieve-laag badge ───────────────────────────────────── */
+.toolbar__badge {
+  position: absolute;
+  top: 2px; right: 2px;
+  min-width: 16px; height: 16px;
+  padding: 0 3px;
+  background: var(--lavender-100);
+  color: var(--white);
+  font: var(--label-strong);
+  font-size: 10px;
+  border-radius: var(--radius-full);
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+
+/* ─── Zwevend paneel: gedeelde basis ───────────────────────── */
+.toolbar-panel {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+}
+
+/* ─── Kaartweergave-paneel (basemap) ───────────────────────── */
+.toolbar-panel--basemap {
+  width: 240px;
+  border-radius: 24px;
+  padding: 8px;
+  box-sizing: border-box;
+  background: linear-gradient(0deg, #d6d9ea 0%, #cccbf1 100%);
+  box-shadow: 12px 12px 12px 0px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+}
+.toolbar-panel--basemap .toolbar-panel__header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  font: var(--section);
+  letter-spacing: 0.03em;
+  color: var(--black);
+}
+.toolbar-panel--basemap .toolbar-panel__close-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px;
+  background: none; border: none; cursor: pointer;
+  color: var(--clay-80);
+  border-radius: var(--radius-full);
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+.toolbar-panel--basemap .toolbar-panel__close-btn:hover {
+  background: rgba(255, 255, 255, 0.4);
+  color: var(--black);
+}
+
+.basemap-list {
+  width: 224px;
+  border-radius: 20px;
+  padding: 8px;
+  box-sizing: border-box;
+  background: var(--white);
+  display: flex; flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+.basemap-row {
+  display: flex; align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  box-sizing: border-box;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.basemap-row:hover { background: var(--surface-clay); }
+.basemap-row__thumb {
+  width: 36px; height: 36px;
+  object-fit: cover;
+  border-radius: 50%;
+  flex-shrink: 0; display: block;
+  border: 1.5px solid rgba(0, 0, 0, 0.06);
+}
+.basemap-row__thumb--placeholder {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-clay);
+  color: var(--clay-60);
+  font-size: 14px;
+  border: 1.5px solid rgba(0, 0, 0, 0.06);
+}
+.basemap-row__name { flex: 1; font: var(--body); color: var(--clay-80); }
+.basemap-row--active .basemap-row__name { font: var(--body-strong); color: var(--black); }
+.basemap-row__check { font-size: 12px; color: var(--lavender-100); flex-shrink: 0; display: flex; }
+
+/* ─── Standaard leaflet-draw-werkbalk verbergen ────────────────
+   De pill-bar vervangt de werkbalk; er wordt geen EditControl meer
+   gerenderd. Deze regel verbergt een eventueel restant van de
+   leaflet-draw-control zonder de teken-cursor/tooltip (andere klasse)
+   te raken. */
+.leaflet-draw.leaflet-control { display: none !important; }

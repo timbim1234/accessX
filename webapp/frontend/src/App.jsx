@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MapView from "./components/MapView.jsx";
 import Sidebar from "./components/Sidebar.jsx";
+import HelpModal from "./components/HelpModal.jsx";
 import { getIsochrone, getJob, getJobResult, getPresets, postAnalyze } from "./api.js";
 import { FALLBACK_PRESETS } from "./fallbackPresets.js";
 import { buildMetricOptions, computeBins, computeDelta, groupColors } from "./metrics.js";
@@ -42,6 +43,9 @@ function polygonAreaKm2(geometry) {
 export default function App() {
   const [presets, setPresets] = useState(null);
   const [presetsWarning, setPresetsWarning] = useState(null);
+  const [showHelp, setShowHelp] = useState(
+    typeof window !== "undefined" && window.location.hash === "#uitleg"
+  );
 
   const [settings, setSettings] = useState(() => ({
     mode: FALLBACK_PRESETS.defaults.mode,
@@ -467,7 +471,20 @@ export default function App() {
       <header className="app-header">
         <span className="app-title">accessX testlab</span>
         <span className="app-subtitle">— X-minutenstad-analyse op eigen polygoon</span>
+        <button
+          className="help-btn"
+          onClick={() => setShowHelp(true)}
+          aria-label="Uitleg van methoden en berekeningen"
+          title="Methoden & berekeningen"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M9.2 9.3a2.8 2.8 0 1 1 3.9 2.6c-.8.4-1.1 1-1.1 1.8v.4" />
+            <circle cx="12" cy="17.3" r="0.6" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
       </header>
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
       <div className="app-body">
         <Sidebar
           presets={presets}
@@ -530,6 +547,8 @@ export default function App() {
           onMapClick={handleMapClick}
           extraPois={extraPois}
           diffData={diffData}
+          hasAOI={Boolean(polygon)}
+          aoiGeometry={polygon}
         />
       </div>
     </div>

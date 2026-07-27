@@ -1,26 +1,130 @@
-/* Visualisatie-tokens uit CONTRACT.md (light mode, expliciet). */
+/* CityMaker design tokens (toegepast op het accessX-testlab).
+   Zie CITYMAKER-STYLING.md. Legacy alias-tokens onderaan houden bestaande
+   component-CSS werkend maar met CityMaker-waarden. */
 :root {
   color-scheme: light;
 
-  --surface: #fcfcfb;
-  --page: #f9f9f7;
-  --ink: #0b0b0b;
-  --ink-secondary: #52514e;
-  --ink-muted: #898781;
-  --gridline: #e1e0d9;
-  --hairline: rgba(11, 11, 11, 0.1);
+  /* ---- Font ---- */
+  --font-roboto: "Roboto", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-base: var(--font-roboto);
 
-  /* Sequentiële choropleth-ramp (licht -> donker = laag -> hoog) */
-  --ramp-1: #cde2fb;
-  --ramp-2: #6da7ec;
-  --ramp-3: #2a78d6;
-  --ramp-4: #1c5cab;
-  --ramp-5: #0d366b;
+  /* ---- Kleurschalen (100 = sterkst -> 20 = lichtst) ---- */
+  --sky-100: #7dc6f6;
+  --sky-80: #97d1f8;
+  --sky-60: #b1ddfa;
+  --sky-40: #cbe8fb;
+  --sky-20: #e5f4fd;
+  --surface-sky: #f2f9fe;
 
-  --accent: #2a78d6;
-  --warn-text: #a04d0b;
-  --error-text: #b42318;
-  --ok: #008300;
+  --lavender-100: #8886d8;
+  --lavender-80: #a09ee0;
+  --lavender-60: #b8b6e8;
+  --lavender-40: #cfcfef;
+  --lavender-20: #e7e7f7;
+  --surface-lavender: #f3f3fb;
 
-  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --clay-100: #484450;
+  --clay-80: #6c6973;
+  --clay-60: #8f8f96;
+  --clay-40: #b5b7c1;
+  --clay-20: #d3dae4;
+  --surface-clay: #f2f5f9;
+
+  --black: #101010;
+  --white: #ffffff;
+
+  /* ---- Data-palet (grafieken/dataviz, geen UI-kleuren) ---- */
+  --data-sage-soft: #b9e1c9;
+  --data-sage-strong: #51d686;
+  --data-sand-soft: #f2e4a7;
+  --data-sand-strong: #f2d245;
+  --data-sky-soft: #95d1f8;
+  --data-sky-strong: #38a7f0;
+  --data-lavender-soft: #cfcfef;
+  --data-lavender-strong: #9898f2;
+  --data-orchid-soft: #e9cfef;
+  --data-orchid-strong: #df7af6;
+  --data-apricot-soft: #ebc9a8;
+  --data-apricot-strong: #efa35a;
+  --data-rose-soft: #e8b7ae;
+  --data-rose-strong: #f07d68;
+  --data-teal-soft: #a9d6d2;
+  --data-teal-strong: #58d4c9;
+
+  /* ---- Rij-states (lavender-based) ---- */
+  --row-hover: rgba(152, 152, 242, 0.08);
+  --row-active: rgba(152, 152, 242, 0.16);
+
+  /* ---- Gradients ---- */
+  --gradient-base: linear-gradient(180deg, #e9eef8 0%, #f3f2f0 100%);
+  --gradient-accent: linear-gradient(0deg, #d6d9ea 0%, #cccbf1 100%);
+  --gradient-white: linear-gradient(#ffffff, #f7f7f7);
+
+  /* ---- Schaduwen ---- */
+  --shadow-modal: 12px 12px 12px 0 rgba(0, 0, 0, 0.04);
+  --shadow-panel: 12px 12px 12px 0 rgba(0, 0, 0, 0.05);
+  --shadow-float: 0 4px 24px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.06);
+
+  /* ---- Typografie (font-shorthand incl. family) ---- */
+  --heading-strong: 500 20px/24px var(--font-base);
+  --heading: 400 20px/24px var(--font-base);
+  --section: 400 16px/20px var(--font-base);
+  --body-strong: 500 12px/18px var(--font-base);
+  --body: 400 12px/18px var(--font-base);
+  --body-light: 300 12px/18px var(--font-base);
+  --label-strong: 500 11px/16px var(--font-base);
+  --label-light: 300 11px/16px var(--font-base);
+
+  /* ---- Spacing (4px-grid) ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-9: 36px;
+  --space-10: 40px;
+  --space-11: 48px;
+  --space-12: 64px;
+
+  /* ---- Radius ---- */
+  --radius-xs: 16px;
+  --radius-sm: 20px;
+  --radius-md: 24px;
+  --radius-lg: 40px;
+  --radius-full: 9999px;
+
+  /* ---- Control-hoogtes ---- */
+  --size-sm: 32px;
+  --size-md: 36px;
+  --size-lg: 40px;
+
+  /* ============================================================
+     Legacy alias-tokens (bestaande App.css/metrics.js blijven werken,
+     nu met CityMaker-waarden).
+     ============================================================ */
+  --font: var(--font-base);
+  --surface: var(--white);
+  --page: var(--surface-clay);
+  --ink: var(--black);
+  --ink-secondary: var(--clay-80);
+  --ink-muted: var(--clay-60);
+  --gridline: var(--clay-20);
+  --hairline: var(--clay-20);
+  --accent: var(--sky-100);
+  --accent-strong: var(--data-sky-strong);
+  --link: #1c6fb8;
+  --ok: #2fa85f;
+  --warn-text: #9a5b12;
+  --error-text: #c0392b;
+
+  /* Sequentiële choropleth-ramp (sky, licht -> donker = laag -> hoog).
+     Alleen als CSS-referentie; de JS-bron staat in metrics.js. */
+  --ramp-1: #e5f4fd;
+  --ramp-2: #b1ddfa;
+  --ramp-3: #7dc6f6;
+  --ramp-4: #38a7f0;
+  --ramp-5: #1466a8;
 }

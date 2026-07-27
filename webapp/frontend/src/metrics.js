@@ -1,35 +1,36 @@
 // Metriek-helpers: labels, eenheden, kleuren, bins en NL-getalnotatie.
 
-// Sequentiële ramp uit CONTRACT.md (licht -> donker = laag -> hoog).
-export const RAMP = ["#cde2fb", "#6da7ec", "#2a78d6", "#1c5cab", "#0d366b"];
+// Sequentiële choropleth-ramp (CityMaker sky, licht -> donker = laag -> hoog).
+export const RAMP = ["#e5f4fd", "#b1ddfa", "#7dc6f6", "#38a7f0", "#1466a8"];
 
-// Categoriale reservekleuren (voor onbekende keys die niet in GROUP_COLORS staan).
+// Categoriale reservekleuren = CityMaker data-palet "strong"
+// (voor onbekende keys die niet in GROUP_COLORS staan).
 export const CAT_COLORS = [
-  "#2a78d6", // blue
-  "#eb6834", // orange
-  "#eda100", // yellow
-  "#e87ba4", // magenta
-  "#e34948", // red
-  "#4a3aa7", // violet
-  "#1baf7a", // aqua
-  "#008300", // green
+  "#38a7f0", // sky
+  "#f07d68", // rose
+  "#efa35a", // apricot
+  "#51d686", // sage
+  "#58d4c9", // teal
+  "#f2d245", // sand
+  "#9898f2", // lavender
+  "#df7af6", // orchid
 ];
 
-// Vaste kleur per groep-key. De kleur hoort bij de key en verandert nooit bij
-// aan/uitzetten van groepen. De drie groen-categorieën delen een groene familie
-// (donker -> licht -> olijf) zodat ze als "groen, verschillende types" lezen;
-// de overige zes staan op eigen distincte tinten.
+// Vaste kleur per groep-key (CityMaker data-palet "strong"). De kleur hoort bij de
+// key en verandert nooit bij aan/uitzetten van groepen. De drie groen-categorieën
+// staan in een groen/teal/zand-familie zodat ze als "groen, verschillende types"
+// lezen; de overige zes op eigen distincte data-tinten.
 export const GROUP_COLORS = {
-  daily_needs: "#2a78d6", // blauw
-  healthcare: "#eb6834", // oranje
-  education: "#eda100", // geel
-  parken_natuur: "#1b7837", // donkergroen
-  speeltuinen: "#66bd63", // middengroen
-  volkstuinen: "#a6761d", // olijf/moestuin
-  public_transport: "#e87ba4", // magenta
-  meeting: "#e34948", // rood
-  sports: "#4a3aa7", // violet
-  open_space: "#1b7837", // legacy (oude resultaten)
+  daily_needs: "#38a7f0", // sky
+  healthcare: "#f07d68", // rose
+  education: "#efa35a", // apricot
+  parken_natuur: "#51d686", // sage (groen)
+  speeltuinen: "#58d4c9", // teal (groen)
+  volkstuinen: "#f2d245", // sand (moestuin)
+  public_transport: "#9898f2", // lavender
+  meeting: "#df7af6", // orchid
+  sports: "#8f8f96", // graphite (clay-60)
+  open_space: "#51d686", // legacy (oude resultaten)
 };
 
 // Kleur-map voor de keys die de presets leveren: expliciete kleur waar bekend,
@@ -174,7 +175,7 @@ export function buildMetricOptions(result, presets) {
 // Divergent palet (uit dataviz palette.md) voor het verschil scenario − basis.
 // Index 0 = sterk beter (donkerblauw) … index 4 = sterk slechter (donkerrood),
 // met een neutrale grijze midden (index 2) rond 0.
-export const DIVERGING = ["#0d366b", "#6da7ec", "#f0efec", "#ec835a", "#d03b3b"];
+export const DIVERGING = ["#1466a8", "#7dc6f6", "#e4e7ee", "#f0a491", "#e0533c"];
 
 // Kleur voor een reeds richting-gecorrigeerde delta (positief = beter) op een
 // symmetrische schaal rond 0; `absMax` bepaalt de uitersten. 5 discrete stappen,

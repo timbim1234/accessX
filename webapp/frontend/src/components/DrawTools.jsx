@@ -1,20 +1,24 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
+import "leaflet-draw"; // breidt L.Draw uit (L.Draw.Polygon/Rectangle, L.Draw.Event)
 import { FeatureGroup, useMap } from "react-leaflet";
-import { EditControl } from "react-leaflet-draw";
 
 const SHAPE_OPTIONS = {
-  color: "#2a78d6",
+  color: "#8886d8", // CityMaker lavender-100 (tekenmodus)
   weight: 2,
   fillOpacity: 0.08,
 };
 
-// Tekenlaag: alleen polygon + rectangle; edit + delete aan; één AOI tegelijk.
-// `externalGeometry` (bv. een geladen PDOK-gebied) wordt in de FeatureGroup
-// geïnjecteerd zodat hij ook bewerkbaar/wisbaar is en de kaart erop inzoomt.
-export default function DrawTools({ onChange, externalGeometry }) {
+// Tekenlaag: één AOI tegelijk (polygoon of rechthoek). Het tekenen wordt gedreven
+// door de zwevende toolbar via `controlsRef` (startPolygon/startRectangle/clear);
+// er is geen zichtbare leaflet-draw-werkbalk meer. `externalGeometry` (bv. een
+// geladen PDOK-gebied) wordt in de FeatureGroup geïnjecteerd zodat de kaart erop
+// inzoomt en de AOI wisbaar is.
+export default function DrawTools({ onChange, externalGeometry, controlsRef }) {
   const fgRef = useRef(null);
   const map = useMap();
+  // Actieve leaflet-draw-handler (om te kunnen disablen bij een nieuwe start/wis).
+  const drawHandlerRef = useRef(null);
 
   const emit = () => {
     const fg = fgRef.current;
@@ -44,19 +48,68 @@ export default function DrawTools({ onChange, externalGeometry }) {
     onChange({ type: "MultiPolygon", coordinates: polys });
   };
 
+  // Nieuwe vorm klaar: vorige AOI weg, nieuwe laag toevoegen, doorgeven.
   const handleCreated = (e) => {
     const fg = fgRef.current;
     if (fg) {
-      // Vorige shape verwijderen: één AOI tegelijk.
-      fg.getLayers().forEach((l) => {
-        if (l !== e.layer) fg.removeLayer(l);
-      });
+      fg.clearLayers(); // één AOI tegelijk
+      fg.addLayer(e.layer);
     }
     emit();
   };
 
-  // Geladen gebied injecteren: bestaande lagen weg, geometrie als bewerkbare
-  // polygoon toevoegen, kaart naar de bounds, en de nieuwe AOI doorgeven.
+  // De CREATED-listener één keer registreren; leaflet-draw vuurt dit event op de
+  // map af zodra het tekenen van een polygoon/rechthoek is afgerond.
+  useEffect(() => {
+    map.on(L.Draw.Event.CREATED, handleCreated);
+    return () => {
+      map.off(L.Draw.Event.CREATED, handleCreated);
+    };
+    // fgRef/onChange zijn stabiel; alleen op de map-referentie (her)binden.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+
+  // Besturing beschikbaar maken voor de toolbar. Bij een nieuwe start wordt een
+  // eventueel lopende teken-handler eerst uitgezet (voorkomt dubbel tekenen).
+  useEffect(() => {
+    if (!controlsRef) return undefined;
+    const startDraw = (Ctor, options) => {
+      if (drawHandlerRef.current) {
+        try {
+          drawHandlerRef.current.disable();
+        } catch {
+          // handler kan al afgesloten zijn; negeren
+        }
+      }
+      const handler = new Ctor(map, options);
+      drawHandlerRef.current = handler;
+      handler.enable();
+    };
+    controlsRef.current = {
+      startPolygon: () =>
+        startDraw(L.Draw.Polygon, { allowIntersection: false, shapeOptions: SHAPE_OPTIONS }),
+      startRectangle: () => startDraw(L.Draw.Rectangle, { shapeOptions: SHAPE_OPTIONS }),
+      clear: () => {
+        if (drawHandlerRef.current) {
+          try {
+            drawHandlerRef.current.disable();
+          } catch {
+            // negeren
+          }
+          drawHandlerRef.current = null;
+        }
+        fgRef.current?.clearLayers();
+        onChange(null);
+      },
+    };
+    return () => {
+      controlsRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, controlsRef, onChange]);
+
+  // Geladen gebied injecteren: bestaande lagen weg, geometrie als polygoon
+  // toevoegen, kaart naar de bounds, en de nieuwe AOI doorgeven.
   useEffect(() => {
     if (!externalGeometry) return;
     const fg = fgRef.current;
@@ -78,22 +131,5 @@ export default function DrawTools({ onChange, externalGeometry }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalGeometry]);
 
-  return (
-    <FeatureGroup ref={fgRef}>
-      <EditControl
-        position="topleft"
-        onCreated={handleCreated}
-        onEdited={emit}
-        onDeleted={emit}
-        draw={{
-          polygon: { allowIntersection: false, showArea: false, shapeOptions: SHAPE_OPTIONS },
-          rectangle: { showArea: false, shapeOptions: SHAPE_OPTIONS },
-          marker: false,
-          circle: false,
-          circlemarker: false,
-          polyline: false,
-        }}
-      />
-    </FeatureGroup>
-  );
+  return <FeatureGroup ref={fgRef} />;
 }
