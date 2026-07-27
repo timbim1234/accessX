@@ -45,3 +45,13 @@ export function getIsochrone(jobId, hexId, interval = 5, signal) {
   const q = `hex_id=${encodeURIComponent(hexId)}&interval=${encodeURIComponent(interval)}`;
   return request(`/api/jobs/${encodeURIComponent(jobId)}/isochrone?${q}`, { signal });
 }
+
+// PDOK Locatieserver (via backend-proxy): suggesties bij een zoekterm.
+export function getGeocode(q, signal) {
+  return request(`/api/geocode?q=${encodeURIComponent(q)}`, { signal });
+}
+
+// PDOK Locatieserver (via backend-proxy): geometrie + oppervlak van één item.
+export function getArea(lsid, signal) {
+  return request(`/api/area/${encodeURIComponent(lsid)}`, { signal });
+}

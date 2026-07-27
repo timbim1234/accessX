@@ -1,3 +1,4 @@
+import GeoSearch from "./GeoSearch.jsx";
 import ProgressList from "./ProgressList.jsx";
 import Results from "./Results.jsx";
 
@@ -23,6 +24,7 @@ export default function Sidebar({
   canRun,
   running,
   onRun,
+  onAreaLoad,
   job,
   error,
   result,
@@ -39,8 +41,20 @@ export default function Sidebar({
   hasIsochrone,
   onClearIso,
   onNewAnalysis,
+  whatIfMode,
+  onWhatIfModeChange,
+  scenarioCategory,
+  onScenarioCategoryChange,
+  scenarioGroups,
+  extraPois,
+  onRemoveExtraPoi,
+  onClearExtraPois,
+  onRunScenario,
+  baselineResult,
+  viewMode,
+  onViewModeChange,
 }) {
-  const limits = presets?.limits || { max_area_km2: 100, warn_area_km2: 25 };
+  const limits = presets?.limits || { max_area_km2: 250, warn_area_km2: 40 };
   const tooBig = areaKm2 > limits.max_area_km2;
   const big = !tooBig && areaKm2 > limits.warn_area_km2;
   const areaTxt = areaKm2.toLocaleString("nl-NL", {
@@ -54,12 +68,16 @@ export default function Sidebar({
 
       <section>
         <h2>Gebied</h2>
+        <GeoSearch onAreaLoad={onAreaLoad} warnAreaKm2={limits.warn_area_km2} />
         {hasPolygon ? (
           <p>
             Oppervlak: <strong>{areaTxt} km²</strong>
           </p>
         ) : (
-          <p className="hint">Teken een polygoon op de kaart (werkbalk linksboven op de kaart).</p>
+          <p className="hint">
+            Zoek een gebied hierboven of teken een polygoon op de kaart (werkbalk linksboven op de
+            kaart).
+          </p>
         )}
         {big && (
           <p className="warning">
@@ -231,6 +249,19 @@ export default function Sidebar({
           hasIsochrone={hasIsochrone}
           onClearIso={onClearIso}
           onNewAnalysis={onNewAnalysis}
+          running={running}
+          whatIfMode={whatIfMode}
+          onWhatIfModeChange={onWhatIfModeChange}
+          scenarioCategory={scenarioCategory}
+          onScenarioCategoryChange={onScenarioCategoryChange}
+          scenarioGroups={scenarioGroups}
+          extraPois={extraPois}
+          onRemoveExtraPoi={onRemoveExtraPoi}
+          onClearExtraPois={onClearExtraPois}
+          onRunScenario={onRunScenario}
+          baselineResult={baselineResult}
+          viewMode={viewMode}
+          onViewModeChange={onViewModeChange}
         />
       )}
     </aside>

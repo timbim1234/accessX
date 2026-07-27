@@ -3,16 +3,16 @@ import MapView from "./components/MapView.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import { getIsochrone, getJob, getJobResult, getPresets, postAnalyze } from "./api.js";
 import { FALLBACK_PRESETS } from "./fallbackPresets.js";
-import { buildMetricOptions, computeBins, groupColors } from "./metrics.js";
+import { buildMetricOptions, computeBins, computeDelta, groupColors } from "./metrics.js";
 
 const ANALYSES_ORDER = ["counts", "nearest", "hansen", "population", "2sfca", "equity"];
 
-// Eenvoudige geodetische benadering: schoenveterformule op lon/lat,
-// gecorrigeerd met cos(gemiddelde breedtegraad) en 111320 m per graad.
-function polygonAreaKm2(geometry) {
-  if (!geometry || geometry.type !== "Polygon" || !Array.isArray(geometry.coordinates)) return 0;
+// Ringoppervlak (km²) van één polygoon (array van ringen); buitenring positief,
+// gaten negatief. Schoenveterformule op lon/lat met cos(breedtegraad)-correctie.
+function ringsAreaKm2(rings) {
+  if (!Array.isArray(rings)) return 0;
   let totalM2 = 0;
-  geometry.coordinates.forEach((ring, r) => {
+  rings.forEach((ring, r) => {
     if (!Array.isArray(ring) || ring.length < 4) return;
     let sum = 0;
     let latSum = 0;
@@ -27,6 +27,16 @@ function polygonAreaKm2(geometry) {
     totalM2 += r === 0 ? ringM2 : -ringM2; // gaten aftrekken
   });
   return Math.max(0, totalM2) / 1e6;
+}
+
+// Oppervlak van een Polygon of MultiPolygon (bv. een geladen PDOK-gemeente).
+function polygonAreaKm2(geometry) {
+  if (!geometry || !Array.isArray(geometry.coordinates)) return 0;
+  if (geometry.type === "Polygon") return ringsAreaKm2(geometry.coordinates);
+  if (geometry.type === "MultiPolygon") {
+    return geometry.coordinates.reduce((acc, poly) => acc + ringsAreaKm2(poly), 0);
+  }
+  return 0;
 }
 
 export default function App() {
@@ -46,6 +56,7 @@ export default function App() {
 
   const [polygon, setPolygon] = useState(null);
   const [areaKm2, setAreaKm2] = useState(0);
+  const [externalGeometry, setExternalGeometry] = useState(null);
 
   const [jobId, setJobId] = useState(null);
   const [job, setJob] = useState(null);
@@ -61,18 +72,49 @@ export default function App() {
   const [isoLoading, setIsoLoading] = useState(false);
   const [isoError, setIsoError] = useState(null);
 
+  // Wat-als scenario
+  const [whatIfMode, setWhatIfMode] = useState(false);
+  const [scenarioCategory, setScenarioCategory] = useState(null);
+  const [extraPois, setExtraPois] = useState([]);
+  const [baselineResult, setBaselineResult] = useState(null);
+  const [viewMode, setViewMode] = useState("scenario"); // "scenario" | "diff"
+
   const abortRef = useRef(null);
   const isoModeRef = useRef(false);
+  const whatIfModeRef = useRef(false);
+  const scenarioCategoryRef = useRef(null);
   const jobIdRef = useRef(null);
   // Teller om in-flight isochroon-fetches te invalideren (nieuwe klik,
   // nieuwe run of reset): een verouderde respons mag de state niet meer raken.
   const isoReqRef = useRef(0);
+  const resultRef = useRef(null);
+  const extraPoisRef = useRef([]);
+  const baselineResultRef = useRef(null);
+  const baseBodyRef = useRef(null); // exacte request-body van de laatste basis-run
+  const baseSnapshotRef = useRef(null); // basis-result om te herstellen bij scenario-fout
+  const scenarioRunRef = useRef(false); // is de lopende run een scenario-run
+
   useEffect(() => {
     isoModeRef.current = isoMode;
   }, [isoMode]);
   useEffect(() => {
+    whatIfModeRef.current = whatIfMode;
+  }, [whatIfMode]);
+  useEffect(() => {
+    scenarioCategoryRef.current = scenarioCategory;
+  }, [scenarioCategory]);
+  useEffect(() => {
     jobIdRef.current = jobId;
   }, [jobId]);
+  useEffect(() => {
+    resultRef.current = result;
+  }, [result]);
+  useEffect(() => {
+    extraPoisRef.current = extraPois;
+  }, [extraPois]);
+  useEffect(() => {
+    baselineResultRef.current = baselineResult;
+  }, [baselineResult]);
 
   // Presets laden; bij falen terugvallen op de ingebouwde kopie uit CONTRACT.md.
   useEffect(() => {
@@ -108,6 +150,13 @@ export default function App() {
   const handlePolygonChange = useCallback((geometry) => {
     setPolygon(geometry);
     setAreaKm2(geometry ? polygonAreaKm2(geometry) : 0);
+  }, []);
+
+  // Een geladen PDOK-gebied als AOI zetten: via externalGeometry injecteert
+  // DrawTools de geometrie in de teken-FeatureGroup en fit de kaart erop.
+  // Nieuwe objectreferentie forceert het injectie-effect (ook bij hetzelfde id).
+  const handleAreaLoad = useCallback((geometry) => {
+    setExternalGeometry(geometry ? { ...geometry } : null);
   }, []);
 
   const updateSettings = useCallback((patch) => {
@@ -147,42 +196,83 @@ export default function App() {
     Number(settings.speed_kmh) > 0 &&
     areaKm2 <= limits.max_area_km2;
 
-  const runAnalysis = useCallback(async () => {
+  // Gedeelde start voor basis- en scenario-runs. Bij een scenario-run wordt de
+  // basis vastgehouden (baselineResult) zodat het verschil getoond kan worden.
+  const startJob = useCallback((body, { scenario }) => {
     if (abortRef.current) abortRef.current.abort();
     const ac = new AbortController();
     abortRef.current = ac;
+    // Basis om tegen te vergelijken: bij een herhaalde scenario-run blijft de
+    // oorspronkelijke basis staan; anders is het huidige (basis-)result.
+    const baseSnapshot = scenario
+      ? baselineResultRef.current || resultRef.current
+      : resultRef.current;
+
     setError(null);
+    if (scenario) {
+      baseSnapshotRef.current = baseSnapshot;
+      setBaselineResult(baseSnapshot);
+      setViewMode("scenario");
+      scenarioRunRef.current = true;
+    } else {
+      baseSnapshotRef.current = null;
+      setBaselineResult(null);
+      setViewMode("scenario");
+      setMetric(null);
+      scenarioRunRef.current = false;
+    }
     setResult(null);
     setJob(null);
     setJobId(null);
-    setMetric(null);
     isoReqRef.current += 1; // in-flight isochroon-fetch van vorige job invalideren
     setIsochrone(null);
     setIsoError(null);
     setIsoLoading(false);
     setRunning(true);
-    try {
-      const groupOrder = Object.keys((presets || FALLBACK_PRESETS).poi_groups);
-      const body = {
-        polygon,
-        mode: settings.mode,
-        speed_kmh: Number(settings.speed_kmh),
-        max_minutes: settings.max_minutes,
-        hex_resolution: settings.hex_resolution,
-        poi_groups: groupOrder.filter((k) => settings.poi_groups.includes(k)),
-        analyses: ANALYSES_ORDER.filter((a) => settings.analyses.includes(a)),
-        beta: Number(settings.beta),
-        sfca_decay: settings.sfca_decay,
-      };
-      const { job_id: newJobId } = await postAnalyze(body, ac.signal);
-      setJobId(newJobId);
-    } catch (e) {
-      if (e.name === "AbortError") return;
-      console.error("Analyse starten mislukt:", e);
-      setError(`Analyse starten mislukt: ${e.message}`);
-      setRunning(false);
-    }
-  }, [polygon, settings, presets]);
+
+    (async () => {
+      try {
+        const { job_id: newJobId } = await postAnalyze(body, ac.signal);
+        setJobId(newJobId);
+      } catch (e) {
+        if (e.name === "AbortError") return;
+        console.error("Analyse starten mislukt:", e);
+        setError(`Analyse starten mislukt: ${e.message}`);
+        setRunning(false);
+        if (scenario) {
+          // Basisweergave herstellen na een mislukte scenario-start.
+          setResult(baseSnapshot);
+          setBaselineResult(null);
+          scenarioRunRef.current = false;
+        }
+      }
+    })();
+  }, []);
+
+  const runAnalysis = useCallback(() => {
+    if (!polygon) return;
+    const groupOrder = Object.keys((presets || FALLBACK_PRESETS).poi_groups);
+    const body = {
+      polygon,
+      mode: settings.mode,
+      speed_kmh: Number(settings.speed_kmh),
+      max_minutes: settings.max_minutes,
+      hex_resolution: settings.hex_resolution,
+      poi_groups: groupOrder.filter((k) => settings.poi_groups.includes(k)),
+      analyses: ANALYSES_ORDER.filter((a) => settings.analyses.includes(a)),
+      beta: Number(settings.beta),
+      sfca_decay: settings.sfca_decay,
+    };
+    baseBodyRef.current = body;
+    startJob(body, { scenario: false });
+  }, [polygon, settings, presets, startJob]);
+
+  // Scenario-run: exact dezelfde body als de basis-run + extra_pois.
+  const runScenario = useCallback(() => {
+    const base = baseBodyRef.current;
+    if (!base || !extraPoisRef.current.length) return;
+    startJob({ ...base, extra_pois: extraPoisRef.current }, { scenario: true });
+  }, [startJob]);
 
   // Pollen (1500 ms) zolang de job loopt; stoppen bij unmount of nieuwe run.
   useEffect(() => {
@@ -202,6 +292,12 @@ export default function App() {
           setResult(r);
           setRunning(false);
         } else if (j.status === "error") {
+          if (scenarioRunRef.current) {
+            // Basisweergave herstellen na een mislukte scenario-run.
+            setResult(baseSnapshotRef.current);
+            setBaselineResult(null);
+            scenarioRunRef.current = false;
+          }
           setError(j.error || "Onbekende fout tijdens de analyse.");
           setRunning(false);
         } else {
@@ -248,13 +344,34 @@ export default function App() {
 
   const bins = useMemo(() => (metricValues ? computeBins(metricValues) : null), [metricValues]);
 
-  const hasNulls = useMemo(
-    () =>
-      metricValues
-        ? metricValues.some((v) => v === null || v === undefined || typeof v !== "number" || !Number.isFinite(v))
-        : false,
-    [metricValues]
-  );
+  // Verschil scenario − basis per hex voor de geselecteerde metriek (richting
+  // gecorrigeerd: positief = beter, symmetrische schaal rond 0).
+  const diffData = useMemo(() => {
+    if (viewMode !== "diff" || !baselineResult || !result || !metric) return null;
+    const raw = computeDelta(baselineResult.hexes?.features, result.hexes?.features, metric);
+    const invert = metric.startsWith("nearest_cost_"); // lager is beter -> teken omkeren
+    const values = new Map();
+    let absMax = 0;
+    for (const [id, dRaw] of raw) {
+      const val = invert ? -dRaw : dRaw;
+      values.set(id, val);
+      const a = Math.abs(val);
+      if (a > absMax) absMax = a;
+    }
+    return { values, absMax };
+  }, [viewMode, baselineResult, result, metric]);
+
+  const hasNulls = useMemo(() => {
+    if (diffData) {
+      const total = result?.hexes?.features?.length || 0;
+      return total > diffData.values.size;
+    }
+    return metricValues
+      ? metricValues.some(
+          (v) => v === null || v === undefined || typeof v !== "number" || !Number.isFinite(v)
+        )
+      : false;
+  }, [diffData, result, metricValues]);
 
   const groupColorMap = useMemo(() => groupColors(presets || FALLBACK_PRESETS), [presets]);
 
@@ -287,6 +404,39 @@ export default function App() {
     setIsoLoading(false);
   }, []);
 
+  // Isochroon-modus en wat-als-plaatsmodus sluiten elkaar uit.
+  const handleIsoModeChange = useCallback((on) => {
+    setIsoMode(on);
+    if (on) setWhatIfMode(false);
+  }, []);
+
+  const handleWhatIfModeChange = useCallback((on) => {
+    setWhatIfMode(on);
+    if (on) setIsoMode(false);
+  }, []);
+
+  // Bij het aanzetten van de wat-als-modus een geldige categorie kiezen uit de
+  // groepen van de basis-run (waartegen de backend extra_pois valideert).
+  useEffect(() => {
+    if (!whatIfMode) return;
+    const groups = baseBodyRef.current?.poi_groups || [];
+    if (!groups.length) return;
+    setScenarioCategory((prev) => (prev && groups.includes(prev) ? prev : groups[0]));
+  }, [whatIfMode]);
+
+  const handleMapClick = useCallback((lat, lng) => {
+    if (!whatIfModeRef.current) return;
+    const category = scenarioCategoryRef.current;
+    if (!category) return;
+    setExtraPois((prev) => [...prev, { lon: lng, lat, category }]);
+  }, []);
+
+  const removeExtraPoi = useCallback((idx) => {
+    setExtraPois((prev) => prev.filter((_, i) => i !== idx));
+  }, []);
+
+  const clearExtraPois = useCallback(() => setExtraPois([]), []);
+
   const newAnalysis = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
     isoReqRef.current += 1; // in-flight isochroon-fetch invalideren
@@ -300,9 +450,17 @@ export default function App() {
     setIsoMode(false);
     setIsoError(null);
     setIsoLoading(false);
+    setWhatIfMode(false);
+    setExtraPois([]);
+    setBaselineResult(null);
+    setViewMode("scenario");
+    scenarioRunRef.current = false;
+    baseBodyRef.current = null;
+    baseSnapshotRef.current = null;
   }, []);
 
   const maxMinutesUsed = result?.meta?.params?.max_minutes ?? settings.max_minutes;
+  const scenarioGroups = baseBodyRef.current?.poi_groups || [];
 
   return (
     <div className="app">
@@ -324,6 +482,7 @@ export default function App() {
           canRun={canRun}
           running={running}
           onRun={runAnalysis}
+          onAreaLoad={handleAreaLoad}
           job={job}
           error={error}
           result={result}
@@ -334,15 +493,28 @@ export default function App() {
           poiVisible={poiVisible}
           onTogglePoi={togglePoi}
           isoMode={isoMode}
-          onIsoModeChange={setIsoMode}
+          onIsoModeChange={handleIsoModeChange}
           isoLoading={isoLoading}
           isoError={isoError}
           hasIsochrone={Boolean(isochrone)}
           onClearIso={clearIsochrone}
           onNewAnalysis={newAnalysis}
+          whatIfMode={whatIfMode}
+          onWhatIfModeChange={handleWhatIfModeChange}
+          scenarioCategory={scenarioCategory}
+          onScenarioCategoryChange={setScenarioCategory}
+          scenarioGroups={scenarioGroups}
+          extraPois={extraPois}
+          onRemoveExtraPoi={removeExtraPoi}
+          onClearExtraPois={clearExtraPois}
+          onRunScenario={runScenario}
+          baselineResult={baselineResult}
+          viewMode={viewMode}
+          onViewModeChange={setViewMode}
         />
         <MapView
           onPolygonChange={handlePolygonChange}
+          externalGeometry={externalGeometry}
           result={result}
           resultKey={jobId || "none"}
           metric={metric}
@@ -354,6 +526,10 @@ export default function App() {
           onHexClick={handleHexClick}
           isochrone={isochrone}
           maxMinutes={maxMinutesUsed}
+          whatIfMode={whatIfMode}
+          onMapClick={handleMapClick}
+          extraPois={extraPois}
+          diffData={diffData}
         />
       </div>
     </div>

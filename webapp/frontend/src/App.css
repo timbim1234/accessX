@@ -426,3 +426,246 @@ details.advanced summary {
 .progress {
   font-size: 13px;
 }
+
+/* ---- Gebied-zoekbalk (PDOK) ---- */
+.geosearch {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.geosearch-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--gridline);
+  border-radius: 5px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.geosearch-results {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 2px 6px rgba(11, 11, 11, 0.08);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.geosearch-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.geosearch-item:hover {
+  background: var(--page);
+}
+
+.geosearch-type {
+  color: var(--ink-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  flex: 0 0 auto;
+}
+
+/* ---- 15-minutenstad-KPI-kaart ---- */
+.kpi-card {
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--page);
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.kpi-card h3 {
+  margin: 0 0 8px;
+}
+
+.kpi-tiles {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.kpi-tile {
+  flex: 1 1 0;
+  min-width: 110px;
+}
+
+.kpi-value {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.kpi-unit {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+}
+
+.kpi-delta {
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi-label {
+  font-size: 12px;
+  color: var(--ink-secondary);
+  margin-top: 2px;
+}
+
+.kpi-bars {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.kpi-bar-row {
+  display: grid;
+  grid-template-columns: 1fr 90px auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.kpi-bar-label {
+  font-size: 12px;
+  color: var(--ink-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kpi-bar-track {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--gridline);
+  overflow: hidden;
+}
+
+.kpi-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+}
+
+.kpi-bar-pct {
+  font-size: 12px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.kpi-foot {
+  margin-top: 8px;
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+/* ---- Toon: Scenario | Verschil ---- */
+.view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.view-toggle-label {
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.view-toggle .segmented {
+  margin-bottom: 0;
+}
+
+/* ---- Wat-als scenario ---- */
+.whatif {
+  margin-top: 14px;
+  border-top: 1px solid var(--gridline);
+  padding-top: 8px;
+}
+
+.whatif-list {
+  margin: 6px 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.whatif-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.whatif-cat {
+  color: var(--ink);
+}
+
+.whatif-coord {
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.whatif-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
+/* ---- Export ---- */
+.export-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.export-row .secondary-btn {
+  margin-top: 0;
+  flex: 1 1 0;
+}
+
+/* ---- Scenario-marker (wat-als) ---- */
+.map-wrap.placing .leaflet-container {
+  cursor: crosshair;
+}
+
+.leaflet-marker-icon.scenario-divicon {
+  background: transparent;
+  border: 0;
+}
+
+.scenario-diamond {
+  display: block;
+  width: 12px;
+  height: 12px;
+  margin: 2px;
+  transform: rotate(45deg);
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 2px rgba(11, 11, 11, 0.7);
+}

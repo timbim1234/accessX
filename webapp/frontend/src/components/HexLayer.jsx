@@ -1,10 +1,24 @@
 import { GeoJSON } from "react-leaflet";
-import { binColor, fmt, metricDecimals, metricGroupKey, metricLabel } from "../metrics.js";
+import { binColor, divergingColor, fmt, metricDecimals, metricGroupKey, metricLabel } from "../metrics.js";
 
-// Choropleth van de hexes voor de geselecteerde metriek.
-// De laag wordt via `key` in MapView opnieuw aangemaakt bij metric-/resultwissel.
-export default function HexLayer({ data, metric, bins, presets, groupKeys, onHexClick }) {
+// Choropleth van de hexes voor de geselecteerde metriek. In "verschil"-modus
+// (diffData aanwezig) kleurt de laag het verschil scenario − basis met een
+// divergent palet (blauw = beter). De laag wordt via `key` in MapView opnieuw
+// aangemaakt bij metric-/result-/modewissel.
+export default function HexLayer({ data, metric, bins, diffData, presets, groupKeys, onHexClick }) {
+  const diffMode = Boolean(diffData);
+  // nearest_cost: lager is beter; delta is al richting-gecorrigeerd in App.
+  const invert = diffMode && metric.startsWith("nearest_cost_");
+
   const baseStyle = (feature) => {
+    if (diffMode) {
+      const val = diffData.values.get(feature?.properties?.hex_id);
+      const color = divergingColor(val, diffData.absMax);
+      if (color === null) {
+        return { fillColor: "#ffffff", fillOpacity: 0, color: "#898781", weight: 1, opacity: 0.7 };
+      }
+      return { fillColor: color, fillOpacity: 0.78, color: "#ffffff", weight: 1, opacity: 1 };
+    }
     const v = feature?.properties?.[metric];
     const color = binColor(bins, typeof v === "number" ? v : null);
     if (color === null) {
@@ -16,10 +30,28 @@ export default function HexLayer({ data, metric, bins, presets, groupKeys, onHex
 
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
+  const line = (label, value, bold) =>
+    `<div class="tt-row${bold ? " tt-main" : ""}"><span>${esc(label)}</span><span class="tt-val">${esc(value)}</span></div>`;
+
   const tooltipHtml = (props) => {
-    const line = (label, value, bold) =>
-      `<div class="tt-row${bold ? " tt-main" : ""}"><span>${esc(label)}</span><span class="tt-val">${esc(value)}</span></div>`;
-    const rows = [line(metricLabel(metric, presets), fmt(props?.[metric], metricDecimals(metric)), true)];
+    const d = metricDecimals(metric);
+    if (diffMode) {
+      const adj = diffData.values.get(props?.hex_id);
+      if (adj === undefined) {
+        return `<div class="hex-tooltip">${line(metricLabel(metric, presets), "geen vergelijking", true)}</div>`;
+      }
+      const scenarioVal = props?.[metric];
+      // adj is richting-gecorrigeerd (positief = beter); rawDelta = scenario − basis
+      const rawDelta = invert ? -adj : adj;
+      const baseVal = typeof scenarioVal === "number" ? scenarioVal - rawDelta : null;
+      const rows = [
+        line(`${metricLabel(metric, presets)} — verschil`, `${rawDelta > 0 ? "+" : ""}${fmt(rawDelta, d)}`, true),
+        line("Basis", fmt(baseVal, d)),
+        line("Scenario", fmt(scenarioVal, d)),
+      ];
+      return `<div class="hex-tooltip">${rows.join("")}</div>`;
+    }
+    const rows = [line(metricLabel(metric, presets), fmt(props?.[metric], d), true)];
     if (metric !== "population" && props && "population" in props) {
       rows.push(line("Bevolking (CBS)", fmt(props.population, 0)));
     }

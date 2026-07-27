@@ -31,11 +31,28 @@ De venv is aangemaakt met: `python -m venv C:\Users\tim\.venvs\accessx` gevolgd 
 
 ## Gebruik
 
-1. Teken een polygoon of rechthoek (knoppen rechtsboven in de kaart), max 100 km².
+1. Teken een polygoon/rechthoek (max 250 km²), **of** zoek een gemeente/wijk/buurt
+   in de zoekbalk (via PDOK) om die grens als analysegebied te laden.
 2. Kies vervoerswijze (lopen/fietsen), minuten (X-minutenstad-drempel), voorzieningengroepen en analyses.
 3. Klik **Analyseer gebied** en volg de voortgang per stap.
-4. Bekijk resultaten: choropleth per metric, POI-lagen, Gini-tabel + Lorenz-curves,
-   en isochronen per hex (toggle "Isochroon bij klik").
+4. Bekijk resultaten: 15-minutenstad-KPI, choropleth per metric, POI-lagen,
+   Gini-tabel + Lorenz-curves, isochronen per hex, en exporteer als GeoJSON/CSV.
+
+### Extra functies
+
+- **15-minutenstad-KPI** — bovenaan de resultaten: bevolkingsgewogen aandeel
+  inwoners dat de drempels haalt (samengestelde score + volledig-voorzien-%, plus
+  per voorziening een balk). Backend: `summary`-blok in het result.
+- **Wat-als scenario** — zet de wat-als-modus aan en plaats fictieve voorzieningen
+  op de kaart; "Herbereken met scenario" draait dezelfde analyse mét die punten.
+  Schakel tussen "Scenario" en "Verschil t.o.v. basis" (divergente choropleth,
+  blauw = beter bereikbaar) en zie de KPI-winst. Backend: `extra_pois` in
+  `POST /api/analyze`.
+- **Gebieden laden** — PDOK Locatieserver-proxy: `GET /api/geocode?q=` (suggesties)
+  en `GET /api/area/{id}` (grens als GeoJSON + oppervlak). Gebiedslimiet staat op
+  250 km² zodat een hele gemeente past.
+- **Export** — download de hexresultaten als GeoJSON of `;`-gescheiden CSV
+  (client-side, voor delen of import in CityMaker/GIS).
 
 ## Wat draait er per analyse?
 

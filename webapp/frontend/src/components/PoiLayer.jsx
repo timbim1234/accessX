@@ -11,7 +11,7 @@ export default function PoiLayer({ data, visible, groupColorMap, groupLabels }) 
     <GeoJSON
       data={data}
       pane="pois"
-      filter={(f) => Boolean(visible[f?.properties?.category])}
+      filter={(f) => Boolean(visible[f?.properties?.category]) && !f?.properties?.scenario}
       pointToLayer={(f, latlng) =>
         L.circleMarker(latlng, {
           pane: "pois",

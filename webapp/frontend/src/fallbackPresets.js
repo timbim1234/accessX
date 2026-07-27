@@ -40,5 +40,5 @@ export const FALLBACK_PRESETS = {
     selected_groups: ["daily_needs", "healthcare", "education", "open_space", "public_transport"],
     analyses: ["counts", "nearest", "hansen", "population", "2sfca", "equity"],
   },
-  limits: { max_area_km2: 100, warn_area_km2: 25 },
+  limits: { max_area_km2: 250, warn_area_km2: 40 },
 };

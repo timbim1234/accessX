@@ -50,6 +50,36 @@ def square(lon: float, lat: float, dlon: float, dlat: float) -> dict:
     }
 
 
+def _pipeline_params(polygon: dict, **overrides) -> dict:
+    """Build a params dict for a direct analysis.run_pipeline() call."""
+    body = {
+        "polygon": polygon,
+        "mode": "walk",
+        "speed_kmh": 4.5,
+        "max_minutes": 15,
+        "hex_resolution": 9,
+        "poi_groups": list(analysis.DEFAULTS["selected_groups"]),
+        "analyses": list(analysis.DEFAULTS["analyses"]),
+        "beta": 0.15,
+        "sfca_decay": "exp",
+        "extra_pois": [],
+    }
+    body.update(overrides)
+    geom = analysis.extract_geometry(body["polygon"])
+    return {**body, "polygon_geom": geom, "request_echo": body}
+
+
+def _sum_count(result: dict, group: str) -> int:
+    """Sum count_<group> over all hex features (0 if the column is absent)."""
+    col = f"count_{group}"
+    total = 0
+    for feat in result.get("hexes", {}).get("features", []):
+        val = feat.get("properties", {}).get(col)
+        if isinstance(val, (int, float)):
+            total += int(val)
+    return total
+
+
 def main() -> int:
     # --- JSON-sanitatie -----------------------------------------------------
     sanitized = analysis.sanitize_json(
@@ -130,6 +160,49 @@ def main() -> int:
             )
         except Exception as exc:  # noqa: BLE001
             check("load_pois_local: geen fout", False, repr(exc))
+
+        # --- run_pipeline: summary + wat-als scenario (extra_pois) ----------
+        # Lokale OSM/CBS: draait offline in seconden. Basis vs. scenario.
+        base_poly = square(5.09, 52.09, 0.006, 0.003)
+        try:
+            base_res = analysis.run_pipeline(
+                _pipeline_params(base_poly, poi_groups=["daily_needs"],
+                                 analyses=["counts", "equity"])
+            )["result"]
+            scen_res = analysis.run_pipeline(
+                _pipeline_params(
+                    base_poly, poi_groups=["daily_needs"],
+                    analyses=["counts", "equity"],
+                    extra_pois=[
+                        {"lon": 5.089, "lat": 52.089, "category": "daily_needs"},
+                        {"lon": 5.091, "lat": 52.091, "category": "daily_needs"},
+                    ],
+                )
+            )["result"]
+            base_count = _sum_count(base_res, "daily_needs")
+            scen_count = _sum_count(scen_res, "daily_needs")
+            summary = scen_res.get("summary")
+            meta = scen_res.get("meta", {})
+            check(
+                "run_pipeline: summary aanwezig met verwachte keys",
+                isinstance(summary, dict)
+                and {"weighted", "population_total", "max_minutes", "per_group",
+                     "composite_pct", "fully_served_pct"} <= set(summary)
+                and isinstance(summary.get("per_group"), list),
+                f"keys={sorted(summary) if isinstance(summary, dict) else summary}",
+            )
+            check(
+                "run_pipeline: meta.n_extra_pois==2 en scenario True",
+                meta.get("n_extra_pois") == 2 and meta.get("scenario") is True,
+                f"n_extra_pois={meta.get('n_extra_pois')}, scenario={meta.get('scenario')}",
+            )
+            check(
+                "run_pipeline: extra_pois verhoogt count_daily_needs",
+                scen_count >= base_count and scen_count > 0,
+                f"basis={base_count}, scenario={scen_count}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            check("run_pipeline summary/scenario: geen fout", False, repr(exc))
     else:
         print("SKIP local_osm data-checks — geen lokale data aanwezig")
 
@@ -153,8 +226,9 @@ def main() -> int:
             r.status_code == 200
             and set(body) >= {"poi_groups", "defaults", "limits"}
             and "daily_needs" in body.get("poi_groups", {})
-            and body.get("limits", {}).get("max_area_km2") == 100,
-            f"status={r.status_code}",
+            and body.get("limits", {}).get("max_area_km2") == 250
+            and body.get("limits", {}).get("warn_area_km2") == 40,
+            f"status={r.status_code}, limits={body.get('limits')}",
         )
 
         # --- polygoon buiten NL -> 400 ---------------------------------------
@@ -214,6 +288,35 @@ def main() -> int:
         r = client.get("/api/jobs/bestaatniet123")
         check("GET /api/jobs/<onbekend> -> 404", r.status_code == 404,
               f"status={r.status_code}")
+
+        # --- scenario: onbekende/niet-geselecteerde groep -> 400 -------------
+        r = client.post(
+            "/api/analyze",
+            json={"polygon": tiny, "poi_groups": ["daily_needs"],
+                  "analyses": ["counts"],
+                  "extra_pois": [{"lon": 4.9041, "lat": 52.3676,
+                                  "category": "healthcare"}]},
+        )
+        check(
+            "POST /api/analyze extra_pois niet-geselecteerde groep -> 400",
+            r.status_code == 400
+            and "niet-geselecteerde groep" in r.json().get("detail", ""),
+            f"status={r.status_code}, detail={r.json().get('detail', '')!r}",
+        )
+
+        # --- scenario: te veel (>50) extra_pois -> 400 -----------------------
+        r = client.post(
+            "/api/analyze",
+            json={"polygon": tiny, "poi_groups": ["daily_needs"],
+                  "analyses": ["counts"],
+                  "extra_pois": [{"lon": 4.9041, "lat": 52.3676,
+                                  "category": "daily_needs"}] * 51},
+        )
+        check(
+            "POST /api/analyze >50 extra_pois -> 400",
+            r.status_code == 400,
+            f"status={r.status_code}, detail={r.json().get('detail', '')!r}",
+        )
 
     print()
     if FAILURES:

@@ -1,8 +1,9 @@
-import { useEffect } from "react";
-import { MapContainer, TileLayer, useMap } from "react-leaflet";
+import { useEffect, useMemo } from "react";
+import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import DrawTools from "./DrawTools.jsx";
 import HexLayer from "./HexLayer.jsx";
 import PoiLayer from "./PoiLayer.jsx";
+import ScenarioLayer from "./ScenarioLayer.jsx";
 import IsochroneLayer from "./IsochroneLayer.jsx";
 import Legend from "./Legend.jsx";
 
@@ -19,8 +20,22 @@ function Panes() {
   return null;
 }
 
+// Kaartklik-handler voor de wat-als-plaatsmodus. Alleen actief als `active`;
+// botst niet met de isochroon-klik (die zit op de hexlaag) omdat wat-als- en
+// isochroon-modus elkaar uitsluiten in App.
+function WhatIfClicker({ active, onPlace }) {
+  useMapEvents({
+    click(e) {
+      if (!active) return;
+      onPlace(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  return null;
+}
+
 export default function MapView({
   onPolygonChange,
+  externalGeometry,
   result,
   resultKey,
   metric,
@@ -32,29 +47,39 @@ export default function MapView({
   onHexClick,
   isochrone,
   maxMinutes,
+  whatIfMode,
+  onMapClick,
+  extraPois,
+  diffData,
 }) {
-  const groupKeys = Object.keys(presets?.poi_groups || {});
-  const groupLabels = {};
-  groupKeys.forEach((k) => {
-    groupLabels[k] = presets.poi_groups[k].label;
-  });
+  const groupKeys = useMemo(() => Object.keys(presets?.poi_groups || {}), [presets]);
+  const groupLabels = useMemo(() => {
+    const labels = {};
+    groupKeys.forEach((k) => {
+      labels[k] = presets.poi_groups[k].label;
+    });
+    return labels;
+  }, [groupKeys, presets]);
   const visKey = groupKeys.filter((k) => poiVisible[k]).join("|");
+  const diffMode = Boolean(diffData);
 
   return (
-    <div className="map-wrap">
+    <div className={`map-wrap${whatIfMode ? " placing" : ""}`}>
       <MapContainer center={[52.09, 5.12]} zoom={8} className="map">
         <Panes />
         <TileLayer
           url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-bijdragers &copy; <a href="https://carto.com/attributions">CARTO</a>'
         />
-        <DrawTools onChange={onPolygonChange} />
+        <DrawTools onChange={onPolygonChange} externalGeometry={externalGeometry} />
+        <WhatIfClicker active={whatIfMode} onPlace={onMapClick} />
         {result?.hexes && metric && (
           <HexLayer
-            key={`hex-${resultKey}-${metric}`}
+            key={`hex-${resultKey}-${metric}-${diffMode ? "diff" : "sc"}`}
             data={result.hexes}
             metric={metric}
             bins={bins}
+            diffData={diffData}
             presets={presets}
             groupKeys={groupKeys}
             onHexClick={onHexClick}
@@ -70,9 +95,19 @@ export default function MapView({
             groupLabels={groupLabels}
           />
         )}
+        {extraPois?.length > 0 && (
+          <ScenarioLayer points={extraPois} groupColorMap={groupColorMap} groupLabels={groupLabels} />
+        )}
       </MapContainer>
-      {result && metric && bins && (
-        <Legend metric={metric} bins={bins} presets={presets} hasNulls={hasNulls} maxMinutes={maxMinutes} />
+      {result && metric && (bins || diffData) && (
+        <Legend
+          metric={metric}
+          bins={bins}
+          diffData={diffData}
+          presets={presets}
+          hasNulls={hasNulls}
+          maxMinutes={maxMinutes}
+        />
       )}
     </div>
   );

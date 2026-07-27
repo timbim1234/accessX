@@ -17,7 +17,7 @@ import geopandas as gpd
 import numpy as np
 import osmnx as ox
 import pandas as pd
-from shapely.geometry import mapping, shape
+from shapely.geometry import Point, mapping, shape
 
 import accessx as acx
 
@@ -109,7 +109,7 @@ DEFAULTS: Dict[str, Any] = {
     "analyses": ["counts", "nearest", "hansen", "population", "2sfca", "equity"],
 }
 
-LIMITS: Dict[str, Any] = {"max_area_km2": 100, "warn_area_km2": 25}
+LIMITS: Dict[str, Any] = {"max_area_km2": 250, "warn_area_km2": 40}
 
 ANALYSIS_KEYS = ["counts", "nearest", "hansen", "population", "2sfca", "equity"]
 
@@ -610,6 +610,48 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
             pop_df, pop_zeros, population_total, has_pop = None, False, None, False
         graph = fut_network.result()
 
+    # --- Scenario: merge fictitious ("what-if") POIs ------------------------
+    # Extra POIs from a what-if request are concatenated into `pois` BEFORE the
+    # metric reprojection, so they flow through counts/nearest/hansen/2sfca just
+    # like real ones. They keep an id "scenario/<i>" so the frontend can tell
+    # them apart, and are NOT added to meta.n_pois (which stays the OSM count).
+    n_extra_pois = 0
+    if params.get("extra_pois"):
+        scenario_rows: List[dict] = []
+        for i, item in enumerate(params.get("extra_pois") or []):
+            if not isinstance(item, dict):
+                continue
+            category = item.get("category")
+            if category not in selected:
+                continue
+            try:
+                lon = float(item["lon"])
+                lat = float(item["lat"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            scenario_rows.append(
+                {
+                    "id": f"scenario/{i}",
+                    "name": "Scenario",
+                    "category": category,
+                    "geometry": Point(lon, lat),
+                }
+            )
+        if scenario_rows:
+            scenario_gdf = gpd.GeoDataFrame(
+                scenario_rows, geometry="geometry", crs=4326
+            )
+            n_extra_pois = len(scenario_gdf)
+            if have_pois and pois is not None and len(pois) > 0:
+                pois = gpd.GeoDataFrame(
+                    pd.concat([pois, scenario_gdf], ignore_index=True),
+                    geometry="geometry",
+                    crs=4326,
+                )
+            else:
+                pois = scenario_gdf
+                have_pois = True
+
     pois_m = pois.to_crs(METRIC_EPSG) if have_pois else None
 
     pop_out_cols: List[str] = []
@@ -764,6 +806,7 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
 
     # --- Stage: equity ------------------------------------------------------
     equity_payload: Dict[str, Any] = {"gini": {}, "gini_weighted": False, "lorenz": {}}
+    equity_ran = False
     if "equity" in analyses:
         if counts_ran:
             rep.start("equity")
@@ -809,6 +852,7 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
                 df_out = df_out.merge(
                     suff[["hex_id"] + suff_cols], on="hex_id", how="left"
                 )
+                equity_ran = True
                 timings["equity"] = time.perf_counter() - t0
                 rep.done(
                     "equity", timings["equity"], f"Gini over {len(props_all)} metrieken"
@@ -827,6 +871,74 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
     else:
         rep.skip("equity")
 
+    # --- Summary: 15-minute-city KPI (only when counts ran) -----------------
+    # Population-weighted when CBS population is available, otherwise per hex.
+    summary: Optional[Dict[str, Any]] = None
+    if counts_ran:
+        plain_sum = pd.DataFrame(df_out.drop(columns="geometry"))
+        n_hexes_sum = len(plain_sum)
+        if has_pop and "population" in plain_sum.columns:
+            weights = (
+                pd.to_numeric(plain_sum["population"], errors="coerce")
+                .fillna(0.0)
+                .to_numpy(dtype=float)
+            )
+        else:
+            weights = np.ones(n_hexes_sum, dtype=float)
+        weight_sum = float(weights.sum())
+
+        def _weighted_pct(mask: np.ndarray) -> float:
+            if weight_sum <= 0:
+                return 0.0
+            return round(100.0 * float(weights[mask].sum()) / weight_sum, 1)
+
+        per_group_sum: List[Dict[str, Any]] = []
+        for g in selected:
+            col = f"count_{g}"
+            if col not in plain_sum.columns:
+                continue
+            counts_arr = (
+                pd.to_numeric(plain_sum[col], errors="coerce").fillna(0).to_numpy()
+            )
+            per_group_sum.append(
+                {
+                    "key": g,
+                    "label": POI_GROUPS[g]["label"],
+                    "pct": _weighted_pct(counts_arr >= 1),
+                }
+            )
+
+        composite_pct: Optional[float] = None
+        fully_served_pct: Optional[float] = None
+        if equity_ran and "sufficient_score" in plain_sum.columns:
+            suff_arr = (
+                pd.to_numeric(plain_sum["sufficient_score"], errors="coerce")
+                .fillna(0.0)
+                .to_numpy(dtype=float)
+            )
+            if weight_sum > 0:
+                composite_pct = round(
+                    100.0 * float((weights * suff_arr).sum()) / weight_sum, 1
+                )
+            else:
+                composite_pct = 0.0
+            fully_served_pct = _weighted_pct(suff_arr >= 1.0 - 1e-9)
+
+        summary = {
+            "weighted": bool(has_pop),
+            "population_total": (
+                round(float(population_total), 1)
+                if (has_pop and population_total is not None)
+                else float(n_hexes_sum)
+            ),
+            "max_minutes": (
+                int(max_minutes) if float(max_minutes).is_integer() else max_minutes
+            ),
+            "per_group": per_group_sum,
+            "composite_pct": composite_pct,
+            "fully_served_pct": fully_served_pct,
+        }
+
     # --- Assemble result ----------------------------------------------------
     hexes_fc = gdf_to_feature_collection(df_out)
 
@@ -835,6 +947,14 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
         pois_pts = pois_m[keep].copy()
         if "name" not in pois_pts.columns:
             pois_pts["name"] = None
+        # Flag scenario POIs (id "scenario/<i>") so the frontend can render
+        # them distinctly from real OSM POIs.
+        if "id" in pois_pts.columns:
+            pois_pts["scenario"] = (
+                pois_pts["id"].astype(str).str.startswith("scenario/")
+            )
+        else:
+            pois_pts["scenario"] = False
         pois_pts = gpd.GeoDataFrame(
             pois_pts, geometry=pois_m.geometry.centroid, crs=METRIC_EPSG
         ).to_crs(4326)
@@ -847,6 +967,8 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
         "area_km2": round(area_km2, 2),
         "n_hexes": int(len(df_out)),
         "n_pois": n_pois,
+        "n_extra_pois": int(n_extra_pois),
+        "scenario": bool(n_extra_pois > 0),
         "population_total": population_total,
         "population_cols": CBS_COLS if pop_out_cols else [],
         "timings_s": {k: round(v, 2) for k, v in timings.items()},
@@ -854,7 +976,13 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
     }
 
     result = sanitize_json(
-        {"hexes": hexes_fc, "pois": pois_fc, "equity": equity_payload, "meta": meta}
+        {
+            "hexes": hexes_fc,
+            "pois": pois_fc,
+            "equity": equity_payload,
+            "summary": summary,
+            "meta": meta,
+        }
     )
     return {"result": result, "graph": graph, "hexes_m": hexes_m}
 

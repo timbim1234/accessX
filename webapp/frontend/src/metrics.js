@@ -77,7 +77,7 @@ export function metricGroupKey(metric, groupKeys) {
 export function metricLabel(metric, presets) {
   const groups = presets?.poi_groups || {};
   if (metric === "population") return "Bevolking (CBS)";
-  if (metric === "sufficient_score") return "Sufficiëntiescore";
+  if (metric === "sufficient_score") return "15-minutenstad-score (0–1)";
   if (metric === "hansen_total") return "Hansen: totaal";
   if (metric === "sfca_total") return "2SFCA: totaal";
   const gk = metricGroupKey(metric, Object.keys(groups));
@@ -166,7 +166,49 @@ export function buildMetricOptions(result, presets) {
   if ("hansen_total" in props) general.push({ value: "hansen_total", label: "Hansen: totaal" });
   if ("sfca_total" in props) general.push({ value: "sfca_total", label: "2SFCA: totaal" });
   if ("population" in props) general.push({ value: "population", label: "Bevolking (CBS)" });
-  if ("sufficient_score" in props) general.push({ value: "sufficient_score", label: "Sufficiëntiescore" });
+  if ("sufficient_score" in props) general.push({ value: "sufficient_score", label: "15-minutenstad-score (0–1)" });
   if (general.length) out.push({ label: "Algemeen", options: general });
+  return out;
+}
+
+// Divergent palet (uit dataviz palette.md) voor het verschil scenario − basis.
+// Index 0 = sterk beter (donkerblauw) … index 4 = sterk slechter (donkerrood),
+// met een neutrale grijze midden (index 2) rond 0.
+export const DIVERGING = ["#0d366b", "#6da7ec", "#f0efec", "#ec835a", "#d03b3b"];
+
+// Kleur voor een reeds richting-gecorrigeerde delta (positief = beter) op een
+// symmetrische schaal rond 0; `absMax` bepaalt de uitersten. 5 discrete stappen,
+// consistent met de choropleth-stijl. Kleine deltas -> grijs.
+export function divergingColor(value, absMax) {
+  if (value === null || value === undefined || typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  if (!absMax || absMax <= 0) return DIVERGING[2];
+  const t = Math.max(-1, Math.min(1, value / absMax)); // -1 (slechter) .. +1 (beter)
+  const idx = Math.round(2 - 2 * t); // t=+1 -> 0 (blauw), t=0 -> 2 (grijs), t=-1 -> 4 (rood)
+  return DIVERGING[Math.max(0, Math.min(DIVERGING.length - 1, idx))];
+}
+
+// Verschil per hex: scenario[metric] − baseline[metric], gematcht op hex_id.
+// Alleen hexes die in BEIDE zitten en in beide een eindig getal hebben.
+// Richting-correctie (nearest_cost: lager is beter) gebeurt bij het kleuren.
+export function computeDelta(baselineFeatures, scenarioFeatures, metric) {
+  const out = new Map();
+  if (!metric || !Array.isArray(baselineFeatures) || !Array.isArray(scenarioFeatures)) return out;
+  const base = new Map();
+  for (const f of baselineFeatures) {
+    const id = f?.properties?.hex_id;
+    const v = f?.properties?.[metric];
+    if (id !== null && id !== undefined && typeof v === "number" && Number.isFinite(v)) {
+      base.set(id, v);
+    }
+  }
+  for (const f of scenarioFeatures) {
+    const id = f?.properties?.hex_id;
+    const v = f?.properties?.[metric];
+    if (id === null || id === undefined || typeof v !== "number" || !Number.isFinite(v)) continue;
+    if (!base.has(id)) continue;
+    out.set(id, v - base.get(id));
+  }
   return out;
 }
