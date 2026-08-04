@@ -255,6 +255,63 @@ p {
   accent-color: var(--data-sky-strong);
 }
 
+/* ---------- Vloeroppervlakte (BAG) ----------
+   Twee kolommen: het paneel is ~290px breed, daar passen geen vier in.
+   De nuance (typisch/zeker/dekking) staat op een subregel onder de categorie. */
+.bvo-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin-top: var(--space-2);
+  font: var(--body);
+}
+
+.bvo-table td {
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--row-hover, rgba(0, 0, 0, 0.04));
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.bvo-table .num {
+  width: 5.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.bvo-sub {
+  display: block;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--clay-60);
+  margin-top: 1px;
+}
+
+.bvo-flag {
+  margin-left: 3px;
+  cursor: help;
+}
+
+.bvo-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ---------- Voorzieningen per sectie ---------- */
+.group-section + .group-section {
+  margin-top: var(--space-3);
+}
+
+.group-section-title {
+  font: var(--body-light);
+  text-transform: none;
+  letter-spacing: 0.03em;
+  color: var(--clay-60);
+  margin: 0 0 var(--space-1);
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--clay-20, rgba(0, 0, 0, 0.08));
+}
+
 /* ---------- Checkbox-rijen ---------- */
 .check-row {
   display: flex;

@@ -17,20 +17,43 @@ export const CAT_COLORS = [
 ];
 
 // Vaste kleur per groep-key (CityMaker data-palet "strong"). De kleur hoort bij de
-// key en verandert nooit bij aan/uitzetten van groepen. De drie groen-categorieën
-// staan in een groen/teal/zand-familie zodat ze als "groen, verschillende types"
-// lezen; de overige zes op eigen distincte data-tinten.
+// key en verandert nooit bij aan/uitzetten van groepen. Verwante categorieën delen
+// een kleurfamilie: onderwijs in apricot-tinten, horeca in orchid, sport in
+// graphite, groen in sage/teal/zand.
 export const GROUP_COLORS = {
-  daily_needs: "#38a7f0", // sky
-  healthcare: "#f07d68", // rose
-  education: "#efa35a", // apricot
-  parken_natuur: "#51d686", // sage (groen)
-  speeltuinen: "#58d4c9", // teal (groen)
-  volkstuinen: "#f2d245", // sand (moestuin)
+  // Functiemix
+  detailhandel_kls: "#38a7f0", // sky
+  detailhandel_grs: "#1466a8", // sky-donker
+  kantoor: "#6f6f78", // clay-70
+  bedrijven: "#8f8f96", // graphite
+  sociaal_cultureel: "#df7af6", // orchid
+  sociaal_medisch: "#f07d68", // rose
+  basis_onderwijs: "#efa35a", // apricot
+  voortgezet_onderwijs: "#c97d2e", // apricot-donker
+  onderwijs_overig: "#e8c9a0", // apricot-licht
+  hotel: "#b07af6", // violet
+  bibliotheek: "#9898f2", // lavender
+  museum: "#7a7ae0", // lavender-donker
+  restaurant: "#f2a0b8", // rose-licht
+  cafe: "#e07a9c", // rose-mid
+  bioscoop_theater: "#c25a8f", // magenta
+  sporthal: "#5a6a78", // slate
+  fitness: "#7d95a8", // slate-licht
+  zwembad: "#38c0d6", // cyaan
+  // Bereikbaarheid
+  daily_needs: "#2b8fd6", // sky-mid
+  kinderopvang: "#f2d245", // sand
   public_transport: "#9898f2", // lavender
-  meeting: "#df7af6", // orchid
-  sports: "#8f8f96", // graphite (clay-60)
-  open_space: "#51d686", // legacy (oude resultaten)
+  speeltuinen: "#58d4c9", // teal
+  parken_natuur: "#51d686", // sage
+  volkstuinen: "#a8c94a", // olijf
+  sport_buiten: "#3fa86a", // sage-donker
+  // Legacy-keys (resultaten/exports van vóór de legenda-indeling)
+  healthcare: "#f07d68",
+  education: "#efa35a",
+  meeting: "#df7af6",
+  sports: "#8f8f96",
+  open_space: "#51d686",
 };
 
 // Kleur-map voor de keys die de presets leveren: expliciete kleur waar bekend,
@@ -67,6 +90,7 @@ export function metricGroupKey(metric, groupKeys) {
       metric === `nearest_cost_${k}_1` ||
       metric === `hansen_${k}` ||
       metric === `sfca_${k}` ||
+      metric === `bvo_hansen_${k}` ||
       metric === `count_${k}_sufficient`
     ) {
       return k;
@@ -88,12 +112,14 @@ export function metricLabel(metric, presets) {
     if (metric === `nearest_cost_${gk}_1`) return `Minuten naar dichtstbijzijnde: ${gl}`;
     if (metric === `hansen_${gk}`) return `Hansen: ${gl}`;
     if (metric === `sfca_${gk}`) return `2SFCA: ${gl}`;
+    if (metric === `bvo_hansen_${gk}`) return `Bereikbaar vloeroppervlak: ${gl}`;
     if (metric === `count_${gk}_sufficient`) return `Drempel gehaald: ${gl}`;
   }
   return metric;
 }
 
 export function metricUnit(metric) {
+  if (metric.startsWith("bvo_")) return "m²";
   if (metric.startsWith("count_") && !metric.endsWith("_sufficient")) return "aantal";
   if (metric.startsWith("nearest_cost_")) return "minuten";
   if (metric === "population" || metric.startsWith("pop_")) return "inwoners";
@@ -102,6 +128,7 @@ export function metricUnit(metric) {
 
 export function metricDecimals(metric) {
   if (metric.startsWith("count_")) return 0;
+  if (metric.startsWith("bvo_")) return 0;
   if (metric === "population" || metric.startsWith("pop_")) return 0;
   if (metric.startsWith("nearest_cost_")) return 1;
   return 2;
@@ -160,6 +187,12 @@ export function buildMetricOptions(result, presets) {
     }
     if (`sfca_${key}` in props) {
       options.push({ value: `sfca_${key}`, label: `2SFCA: ${g.label}` });
+    }
+    if (`bvo_hansen_${key}` in props) {
+      options.push({
+        value: `bvo_hansen_${key}`,
+        label: `Bereikbaar vloeroppervlak: ${g.label}`,
+      });
     }
     if (options.length) out.push({ label: g.label, options });
   }

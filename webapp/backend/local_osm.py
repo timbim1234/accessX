@@ -79,6 +79,21 @@ def read_meta() -> dict:
         return {}
 
 
+def missing_categories(selected: List[str]) -> List[str]:
+    """Selected categories that this extract was not prepared for.
+
+    The category is baked into pois.parquet at prep time, so an extract built
+    before a POI_GROUPS change silently returns 0 POIs for any new category.
+    Callers use this to fall back to Overpass instead. An extract without a
+    "categories" key in meta.json predates this check and is treated as stale
+    for every category.
+    """
+    known = read_meta().get("categories")
+    if not isinstance(known, list):
+        return list(selected)
+    return [c for c in selected if c not in set(known)]
+
+
 def _get_edges_dataset() -> pds.Dataset:
     global _edges_dataset
     if _edges_dataset is None:
@@ -338,12 +353,22 @@ def load_pois_local(
     if len(sub) == 0:
         return _empty_pois()
 
+    data = {
+        "id": sub["id"].to_numpy(),
+        "name": sub["name"].to_numpy() if "name" in sub.columns else None,
+        "category": sub["category"].to_numpy(),
+    }
+    # Adres doorgeven als de extract het heeft (prep van vóór de adres-koppeling
+    # levert deze kolommen niet); bag.py koppelt daarop de vloeroppervlakte.
+    for src, dst in (
+        ("addr_street", "addr:street"),
+        ("addr_housenumber", "addr:housenumber"),
+        ("addr_postcode", "addr:postcode"),
+    ):
+        if src in sub.columns:
+            data[dst] = sub[src].to_numpy()
     out = gpd.GeoDataFrame(
-        {
-            "id": sub["id"].to_numpy(),
-            "name": sub["name"].to_numpy() if "name" in sub.columns else None,
-            "category": sub["category"].to_numpy(),
-        },
+        data,
         geometry=gpd.points_from_xy(sub["x"].to_numpy(), sub["y"].to_numpy()),
         crs=4326,
     )

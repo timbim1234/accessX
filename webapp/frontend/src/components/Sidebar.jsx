@@ -2,13 +2,32 @@ import GeoSearch from "./GeoSearch.jsx";
 import ProgressList from "./ProgressList.jsx";
 import Results from "./Results.jsx";
 
-const ANALYSIS_OPTIONS = [
+// Voorzieningengroepen gebundeld per sectie uit /api/presets, in de volgorde
+// die de backend aangeeft. Groepen zonder (bekende) sectie komen ongelabeld
+// bovenaan, zodat een oudere backend zonder `sections` gewoon blijft werken.
+function groupSections(presets) {
+  const entries = Object.entries(presets.poi_groups || {});
+  const sections = presets.sections || [];
+  const known = new Set(sections.map((s) => s.key));
+  const loose = entries.filter(([, g]) => !known.has(g?.section));
+  const out = loose.length ? [{ key: "__loose", label: null, entries: loose }] : [];
+  sections.forEach((s) => {
+    const inSection = entries.filter(([, g]) => g?.section === s.key);
+    if (inSection.length) out.push({ key: s.key, label: s.label, entries: inSection });
+  });
+  return out;
+}
+
+// Ook de bron voor de volgorde waarin App.jsx de analyses meestuurt: één lijst,
+// zodat een nieuwe analyse niet wél een vinkje krijgt maar uit het verzoek valt.
+export const ANALYSIS_OPTIONS = [
   { key: "counts", label: "Aantal bereikbaar" },
   { key: "nearest", label: "Dichtstbijzijnde" },
   { key: "hansen", label: "Hansen" },
   { key: "population", label: "CBS-bevolking" },
   { key: "2sfca", label: "2SFCA vraag/aanbod" },
   { key: "equity", label: "Verdeling & Gini" },
+  { key: "bvo", label: "Vloeroppervlakte (BAG)" },
 ];
 
 export default function Sidebar({
@@ -138,16 +157,21 @@ export default function Sidebar({
       <section>
         <h2>Voorzieningen</h2>
         {presets ? (
-          Object.entries(presets.poi_groups).map(([key, g]) => (
-            <label key={key} className="check-row">
-              <input
-                type="checkbox"
-                checked={settings.poi_groups.includes(key)}
-                onChange={() => onToggleGroup(key)}
-              />
-              <span className="dot" style={{ background: groupColorMap[key] }} />
-              <span>{g.label}</span>
-            </label>
+          groupSections(presets).map(({ key: sectionKey, label, entries }) => (
+            <div key={sectionKey} className="group-section">
+              {label && <h3 className="group-section-title">{label}</h3>}
+              {entries.map(([key, g]) => (
+                <label key={key} className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={settings.poi_groups.includes(key)}
+                    onChange={() => onToggleGroup(key)}
+                  />
+                  <span className="dot" style={{ background: groupColorMap[key] }} />
+                  <span>{g.label}</span>
+                </label>
+              ))}
+            </div>
           ))
         ) : (
           <p className="hint">Voorinstellingen laden…</p>

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MapView from "./components/MapView.jsx";
-import Sidebar from "./components/Sidebar.jsx";
+import Sidebar, { ANALYSIS_OPTIONS } from "./components/Sidebar.jsx";
 import HelpModal from "./components/HelpModal.jsx";
 import { getIsochrone, getJob, getJobResult, getPresets, postAnalyze } from "./api.js";
 import { FALLBACK_PRESETS } from "./fallbackPresets.js";
 import { buildMetricOptions, computeBins, computeDelta, groupColors } from "./metrics.js";
 
-const ANALYSES_ORDER = ["counts", "nearest", "hansen", "population", "2sfca", "equity"];
+const ANALYSES_ORDER = ANALYSIS_OPTIONS.map((o) => o.key);
 
 // Ringoppervlak (km²) van één polygoon (array van ringen); buitenring positief,
 // gaten negatief. Schoenveterformule op lon/lat met cos(breedtegraad)-correctie.

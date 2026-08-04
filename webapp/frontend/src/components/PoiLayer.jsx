@@ -24,10 +24,18 @@ export default function PoiLayer({ data, visible, groupColorMap, groupLabels }) 
         })
       }
       onEachFeature={(f, layer) => {
-        const name = f?.properties?.name || "naamloos";
-        const cat = f?.properties?.category;
-        const label = groupLabels[cat] || cat || "onbekend";
-        layer.bindTooltip(`${esc(name)} — ${esc(label)}`);
+        const p = f?.properties || {};
+        const name = p.name || "naamloos";
+        const label = groupLabels[p.category] || p.category || "onbekend";
+        // Vloeroppervlakte alleen tonen als de BAG-koppeling er een gaf; het
+        // vraagteken markeert een koppeling op afstand i.p.v. op gebruiksdoel.
+        const m2 =
+          typeof p.bvo_m2 === "number" && Number.isFinite(p.bvo_m2)
+            ? ` — ${Math.round(p.bvo_m2).toLocaleString("nl-NL")} m² BVO${
+                p.doel_match ? "" : " (?)"
+              }`
+            : "";
+        layer.bindTooltip(`${esc(name)} — ${esc(label)}${esc(m2)}`);
       }}
     />
   );

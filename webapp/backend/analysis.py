@@ -17,11 +17,14 @@ import geopandas as gpd
 import numpy as np
 import osmnx as ox
 import pandas as pd
+import shapely
 from shapely.geometry import Point, mapping, shape
 
 import accessx as acx
 
+import bag
 import local_osm
+import poi_groups as pg
 
 # ---------------------------------------------------------------------------
 # Paths and settings
@@ -44,74 +47,31 @@ MAX_BUFFER_M = 2500.0
 # Presets (see CONTRACT.md)
 # ---------------------------------------------------------------------------
 
-POI_GROUPS: Dict[str, Dict[str, Any]] = {
-    "daily_needs": {
-        "label": "Dagelijkse boodschappen",
-        "tags": {
-            "shop": ["supermarket", "bakery", "greengrocer", "butcher"],
-            "amenity": ["marketplace"],
-        },
-    },
-    "healthcare": {
-        "label": "Gezondheidszorg",
-        "tags": {"amenity": ["pharmacy", "doctors", "clinic", "hospital", "dentist"]},
-    },
-    "education": {
-        "label": "Onderwijs",
-        "tags": {"amenity": ["school", "kindergarten"]},
-    },
-    "parken_natuur": {
-        "label": "Parken & natuur",
-        "tags": {
-            "leisure": ["park", "nature_reserve", "recreation_ground", "dog_park", "common"],
-            "landuse": ["recreation_ground", "village_green"],
-        },
-    },
-    "speeltuinen": {
-        "label": "Speeltuinen",
-        "tags": {"leisure": ["playground"]},
-    },
-    "volkstuinen": {
-        "label": "Volkstuinen & moestuinen",
-        "tags": {"landuse": ["allotments"]},
-    },
-    "public_transport": {
-        "label": "OV-haltes",
-        "tags": {
-            "highway": ["bus_stop"],
-            "railway": ["station", "tram_stop"],
-            "amenity": ["bus_station"],
-        },
-    },
-    "meeting": {
-        "label": "Horeca & ontmoeten",
-        "tags": {"amenity": ["cafe", "restaurant", "community_centre", "library"]},
-    },
-    "sports": {
-        "label": "Sport",
-        "tags": {"leisure": ["sports_centre", "fitness_centre", "swimming_pool"]},
-    },
-}
+# Categorieen en de tag-matcher staan in poi_groups.py, zodat de pbf-prep
+# (prepare_local_data.py) exact dezelfde definities gebruikt zonder de zware
+# geopandas/osmnx-stack te importeren.
+POI_GROUPS: Dict[str, Dict[str, Any]] = pg.POI_GROUPS
+SECTIONS: List[Dict[str, str]] = pg.SECTIONS
 
 DEFAULTS: Dict[str, Any] = {
     "mode": "walk",
     "speed_kmh": 4.5,
     "max_minutes": 15,
     "hex_resolution": 9,
-    "selected_groups": [
-        "daily_needs",
-        "healthcare",
-        "education",
-        "parken_natuur",
-        "speeltuinen",
-        "public_transport",
-    ],
-    "analyses": ["counts", "nearest", "hansen", "population", "2sfca", "equity"],
+    "selected_groups": list(pg.DEFAULT_SELECTED),
+    "analyses": ["counts", "nearest", "hansen", "population", "2sfca", "equity", "bvo"],
 }
 
 LIMITS: Dict[str, Any] = {"max_area_km2": 250, "warn_area_km2": 40}
 
-ANALYSIS_KEYS = ["counts", "nearest", "hansen", "population", "2sfca", "equity"]
+# Een BAG-vloeroppervlakte boven dit veelvoud van de categoriemediaan telt als
+# uitschieter: meestal een compleet complex dat als één verblijfsobject is
+# geregistreerd. Wordt gerapporteerd, niet weggefilterd.
+BVO_OUTLIER_FACTOR = 10.0
+
+ANALYSIS_KEYS = [
+    "counts", "nearest", "hansen", "population", "2sfca", "equity", "bvo",
+]
 
 # Ordered stage definitions (key, Dutch label).
 STAGES: List[Tuple[str, str]] = [
@@ -119,6 +79,7 @@ STAGES: List[Tuple[str, str]] = [
     ("network", "Straatnetwerk (OSM) laden"),
     ("cost", "Reistijdkosten toekennen"),
     ("pois", "Voorzieningen (OSM) ophalen"),
+    ("bag", "Vloeroppervlakte (BAG) koppelen"),
     ("population", "CBS-bevolking koppelen"),
     ("counts", "Bereikbare voorzieningen tellen"),
     ("nearest", "Dichtstbijzijnde voorziening"),
@@ -272,23 +233,29 @@ def _subsample(values: List[float], n: int = 100) -> List[float]:
     return [vals[i] for i in idx]
 
 
-def _merge_group_tags(selected: List[str]) -> Dict[str, Any]:
-    """Union the OSM tag dicts of the selected groups into one query dict."""
-    merged: Dict[str, Any] = {}
-    for group in selected:
-        for key, values in POI_GROUPS[group]["tags"].items():
-            if values is True or merged.get(key) is True:
-                merged[key] = True
-                continue
-            vals = [values] if isinstance(values, str) else list(values)
-            merged[key] = sorted(set(merged.get(key, [])) | set(vals))
-    return merged
+def _matches_tags(features: gpd.GeoDataFrame, spec: Dict[str, Any]) -> pd.Series:
+    """Boolean mask for a poi_groups match-spec, vectorized over a GeoDataFrame.
 
+    Mirrors poi_groups.matches() exactly (any/all/not + leaf), so the Overpass
+    path and the local-extract path categorize identically. A key that OSMnx
+    did not return as a column yields an all-False leaf, which is correct: no
+    feature can carry a tag that is absent from the response.
+    """
+    if "any" in spec:
+        mask = pd.Series(False, index=features.index)
+        for sub in spec["any"]:
+            mask |= _matches_tags(features, sub)
+        return mask
+    if "all" in spec:
+        mask = pd.Series(True, index=features.index)
+        for sub in spec["all"]:
+            mask &= _matches_tags(features, sub)
+        return mask
+    if "not" in spec:
+        return ~_matches_tags(features, spec["not"])
 
-def _matches_tags(features: gpd.GeoDataFrame, tags: Dict[str, Any]) -> pd.Series:
-    """Boolean mask: rows matching any (key, value) pair of a group's tag dict."""
     mask = pd.Series(False, index=features.index)
-    for key, values in tags.items():
+    for key, values in spec.items():
         if key not in features.columns:
             continue
         col = features[key]
@@ -298,6 +265,35 @@ def _matches_tags(features: gpd.GeoDataFrame, tags: Dict[str, Any]) -> pd.Series
             vals = [values] if isinstance(values, str) else list(values)
             mask |= col.isin(vals)
     return mask
+
+
+def _dedup_point_in_area(part: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Drop area features of one category that contain a point of that category.
+
+    A school is often mapped twice: as a node AND as the building/grounds
+    polygon. Both match the same category, so counts and 2SFCA supply are
+    inflated (measured on the NL extract: 28% of school nodes sit inside a
+    school area). The node is the more precise representation, so the
+    enclosing area is dropped. Points are never merged with each other -- two
+    GPs in one building are genuinely two facilities.
+    """
+    if len(part) < 2:
+        return part
+    is_point = part.geometry.geom_type == "Point"
+    pts = part.geometry[is_point]
+    areas = part.geometry[~is_point]
+    if len(pts) == 0 or len(areas) == 0:
+        return part
+    tree = shapely.STRtree(pts.to_numpy())
+    area_arr = areas.to_numpy()
+    drop_positions = {
+        i for i in range(len(area_arr))
+        if len(tree.query(area_arr[i], predicate="contains")) > 0
+    }
+    if not drop_positions:
+        return part
+    drop_index = areas.index[sorted(drop_positions)]
+    return part.drop(index=drop_index)
 
 
 def fetch_pois_combined(
@@ -312,22 +308,35 @@ def fetch_pois_combined(
     get_pois_osm where the pipeline depends on it: id, name, category, geometry.
     """
     polygon = aoi_wgs84.geometry.union_all()
-    merged = _merge_group_tags(selected)
-    empty = gpd.GeoDataFrame(
-        {"id": [], "name": [], "category": []}, geometry=[], crs=4326
-    )
+    merged = pg.query_tags(selected)
     try:
         feats = ox.features_from_polygon(polygon, tags=merged)
     except Exception as exc:
         if type(exc).__name__ == "InsufficientResponseError":
-            return empty
+            return _empty_pois()
         raise
-    if len(feats) == 0:
-        return empty
+    return categorize_features(feats, selected)
+
+
+def _empty_pois() -> gpd.GeoDataFrame:
+    return gpd.GeoDataFrame({"id": [], "name": [], "category": []}, geometry=[], crs=4326)
+
+
+def categorize_features(
+    feats: gpd.GeoDataFrame, selected: List[str]
+) -> gpd.GeoDataFrame:
+    """Assign categories to raw OSM features and reduce them to points.
+
+    Shared by the combined-query path and the accessx fallback so both apply
+    the same match-specs, the same node/area dedup and the same point output
+    as the local-extract path (local_osm.load_pois_local).
+    """
+    if feats is None or len(feats) == 0:
+        return _empty_pois()
 
     feats = feats[feats.geometry.geom_type.isin(["Point", "Polygon", "MultiPolygon"])]
     if len(feats) == 0:
-        return empty
+        return _empty_pois()
 
     feats = feats.reset_index()
     # osmnx 2.x uses index levels (element, id); 1.x used (element_type, osmid).
@@ -335,24 +344,54 @@ def fetch_pois_combined(
         osm_id = feats["element"].astype(str) + "/" + feats["id"].astype(str)
     elif "element_type" in feats.columns and "osmid" in feats.columns:
         osm_id = feats["element_type"].astype(str) + "/" + feats["osmid"].astype(str)
+    elif "osm_type" in feats.columns and "osmid" in feats.columns:
+        # accessx.get_pois_osm output (fallback path).
+        osm_id = feats["osm_type"].astype(str) + "/" + feats["osmid"].astype(str)
     else:
         osm_id = pd.Series(range(len(feats)), index=feats.index).astype(str)
     feats = feats.assign(**{"__poi_id": osm_id})
     if "name" not in feats.columns:
         feats["name"] = None
 
+    # Adreskolommen meenemen als OSM ze levert: bag.py koppelt de
+    # vloeroppervlakte daar bij voorkeur op, in plaats van op afstand.
+    addr_cols = [
+        c
+        for c in ("addr:street", "addr:housenumber", "addr:postcode")
+        if c in feats.columns
+    ]
+
     parts = []
     for group in selected:
-        sub = feats[_matches_tags(feats, POI_GROUPS[group]["tags"])]
+        if group not in POI_GROUPS:
+            continue
+        sub = feats[_matches_tags(feats, POI_GROUPS[group]["match"])]
         if len(sub) == 0:
             continue
-        part = sub[["__poi_id", "name", "geometry"]].rename(columns={"__poi_id": "id"})
+        part = sub[["__poi_id", "name", *addr_cols, "geometry"]].rename(
+            columns={"__poi_id": "id"}
+        )
+        part = gpd.GeoDataFrame(part, geometry="geometry", crs=feats.crs)
+        part = _dedup_point_in_area(part)
         part["category"] = group
         parts.append(part)
     if not parts:
-        return empty
-    out = pd.concat(parts, ignore_index=True)
-    return gpd.GeoDataFrame(out, geometry="geometry", crs=4326)
+        return _empty_pois()
+
+    out = gpd.GeoDataFrame(
+        pd.concat(parts, ignore_index=True), geometry="geometry", crs=4326
+    )
+    # Areas -> centroid, so downstream stages see one point per facility and
+    # both POI sources (Overpass / local extract) behave identically.
+    is_area = out.geometry.geom_type != "Point"
+    if is_area.any():
+        # shapely.centroid on the array, not GeoSeries.centroid: the latter
+        # warns about centroids in a geographic CRS. The local extract does the
+        # same planar centroid in WGS84, so this keeps both paths identical.
+        out.loc[is_area, "geometry"] = shapely.centroid(
+            out.loc[is_area, "geometry"].to_numpy()
+        )
+    return out
 
 
 def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
@@ -424,8 +463,9 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
     # slowest of the three instead of their sum. The stage reporter is
     # thread-safe (store lock in jobs.py); timings/warnings use distinct
     # keys/appends, which are safe under the GIL.
-    need_pois = bool({"counts", "nearest", "hansen", "2sfca"} & analyses)
+    need_pois = bool({"counts", "nearest", "hansen", "2sfca", "bvo"} & analyses)
     need_pop = ("population" in analyses) or ("2sfca" in analyses)
+    need_bvo = "bvo" in analyses
 
     def task_network():
         """Build the network and add travel-time cost. Raises PipelineError (fatal)."""
@@ -498,15 +538,23 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
             # accessx.get_pois_osm (slow). Warn on each fallback.
             p = None
             if local_osm.local_data_available():
-                try:
-                    p = local_osm.load_pois_local(aoi_buf, selected)
-                    detail_suffix = ", lokale extract"
-                except Exception as exc:
+                stale = local_osm.missing_categories(selected)
+                if stale:
                     warn(
-                        f"Lokale POI-extract mislukt ({exc}); "
-                        "terugval op gecombineerde Overpass-query."
+                        "De lokale OSM-extract is voorbereid zonder de categorie(en) "
+                        f"{', '.join(stale)}; terugval op Overpass. Draai "
+                        "prepare_local_data.py opnieuw om dit te verhelpen."
                     )
-                    p = None
+                else:
+                    try:
+                        p = local_osm.load_pois_local(aoi_buf, selected)
+                        detail_suffix = ", lokale extract"
+                    except Exception as exc:
+                        warn(
+                            f"Lokale POI-extract mislukt ({exc}); "
+                            "terugval op gecombineerde Overpass-query."
+                        )
+                        p = None
             if p is None:
                 try:
                     p = fetch_pois_combined(aoi_buf, selected)
@@ -516,11 +564,17 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
                         f"Gecombineerde POI-query mislukt ({exc}); "
                         "terugval op accessx get_pois_osm (traag)."
                     )
-                    p = acx.get_pois_osm(
+                    # One query per OSM key instead of one combined query, then
+                    # the same local categorization: get_pois_osm cannot express
+                    # the any/all/not specs itself, so it only fetches the
+                    # superset (columns="all" keeps the tag columns we match on).
+                    raw = acx.get_pois_osm(
                         aoi_buf,
-                        poi_groups={k: POI_GROUPS[k]["tags"] for k in selected},
+                        osm_tags=pg.query_tags(selected),
                         show_progress=False,
+                        columns="all",
                     )
+                    p = categorize_features(raw, selected)
             timings["pois"] = time.perf_counter() - t0
             found = p is not None and len(p) > 0
             per_group = {g: 0 for g in selected}
@@ -537,12 +591,53 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
                     "voorzieningsanalyses worden overgeslagen."
                 )
                 rep.done("pois", timings["pois"], "0 voorzieningen")
+            if found and need_bvo:
+                p = _attach_bvo(p)
+            elif need_bvo:
+                rep.skip("bag", detail="geen voorzieningen")
+            else:
+                rep.skip("bag")
             return p, found, per_group
         except Exception as exc:
             timings["pois"] = time.perf_counter() - t0
             warn(f"Voorzieningen ophalen mislukt ({exc}); afhankelijke analyses overgeslagen.")
             rep.skip("pois", detail="mislukt")
+            rep.skip("bag", detail="geen voorzieningen")
             return None, False, {g: 0 for g in selected}
+
+    def _attach_bvo(p: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """Add BAG floor-area columns to the POIs. Never raises.
+
+        Runs inside task_pois so the PDOK round-trip overlaps with the network
+        build. On failure the POIs come back unchanged and every m2-metric is
+        simply absent -- the rest of the analysis is unaffected.
+        """
+        rep.start("bag")
+        t0 = time.perf_counter()
+        try:
+            p = bag.attach_floor_area(p)
+            timings["bag"] = time.perf_counter() - t0
+            with_m2 = int(p["bvo_m2"].notna().sum())
+            total_m2 = float(p["bvo_m2"].sum(skipna=True))
+            rep.done(
+                "bag",
+                timings["bag"],
+                f"{with_m2} van {len(p)} voorzieningen, {total_m2:,.0f} m² BVO".replace(
+                    ",", "."
+                ),
+            )
+        except bag.BagError as exc:
+            timings["bag"] = time.perf_counter() - t0
+            warn(f"{exc} De analyse draait door zonder vloeroppervlakte.")
+            rep.skip("bag", detail="mislukt")
+        except Exception as exc:
+            timings["bag"] = time.perf_counter() - t0
+            warn(
+                f"Vloeroppervlakte (BAG) koppelen mislukt ({exc}); "
+                "de analyse draait door zonder m²."
+            )
+            rep.skip("bag", detail="mislukt")
+        return p
 
     def task_population():
         """Read CBS grid and map to hexes. Never raises.
@@ -804,6 +899,50 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
     else:
         rep.skip("sfca")
 
+    # --- Bereikbaar vloeroppervlak (m2, afstandsgewogen) --------------------
+    # Zelfde Hansen-formule als hierboven, maar elke voorziening telt mee voor
+    # haar vloeroppervlak in plaats van als "1". Antwoord op "hoeveel m2
+    # voorziening is er vanaf hier binnen bereik", waar count_<groep> alleen
+    # "hoeveel stuks" zegt. Alleen categorieen met daadwerkelijk m2 doen mee --
+    # een speeltuin heeft geen vloeroppervlak en zou een lege kolom opleveren.
+    bvo_groups: List[str] = []
+    if need_bvo and have_pois and "bvo_m2" in pois_m.columns:
+        with_area = pois_m[pois_m["bvo_m2"].fillna(0) > 0]
+        bvo_groups = [g for g in selected if g in set(with_area["category"])]
+        if bvo_groups:
+            t0 = time.perf_counter()
+            try:
+                hansen_bvo = acx.compute_hansen_accessibility(
+                    graph,
+                    hexes_m,
+                    with_area,
+                    max_cost=max_minutes,
+                    cost_attr="time_min",
+                    beta=beta,
+                    poi_weight_col="bvo_m2",
+                    default_poi_weight=0.0,
+                )
+                rename = {
+                    f"hansen_{g}": f"bvo_hansen_{g}"
+                    for g in bvo_groups
+                    if f"hansen_{g}" in hansen_bvo.columns
+                }
+                keep_cols = ["hex_id"] + list(rename)
+                df_out = df_out.merge(
+                    pd.DataFrame(hansen_bvo[keep_cols]).rename(columns=rename),
+                    on="hex_id",
+                    how="left",
+                )
+                for g in bvo_groups:
+                    col = f"bvo_hansen_{g}"
+                    if col in df_out.columns:
+                        df_out[col] = df_out[col].fillna(0.0)
+                timings["bvo_hansen"] = time.perf_counter() - t0
+            except Exception as exc:
+                timings["bvo_hansen"] = time.perf_counter() - t0
+                warn(f"Bereikbaar vloeroppervlak berekenen mislukt ({exc}).")
+                bvo_groups = []
+
     # --- Stage: equity ------------------------------------------------------
     equity_payload: Dict[str, Any] = {"gini": {}, "gini_weighted": False, "lorenz": {}}
     equity_ran = False
@@ -939,11 +1078,75 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
             "fully_served_pct": fully_served_pct,
         }
 
+    # --- BAG floor area per category ----------------------------------------
+    # `m2_totaal` telt gedeelde verblijfsobjecten precies een keer (bvo_m2 is
+    # al aandeel-gecorrigeerd); `m2_mediaan` is de waarde per voorziening. `zeker_pct` zegt
+    # welk deel is gekoppeld aan een verblijfsobject waarvan het gebruiksdoel
+    # bij de categorie past -- de rest is alleen op afstand toegewezen.
+    bvo_payload: Optional[Dict[str, Any]] = None
+    if need_bvo and have_pois and "bvo_m2" in pois_m.columns:
+        per_group_bvo: List[Dict[str, Any]] = []
+        for g in selected:
+            sub = pois_m[pois_m["category"] == g]
+            if len(sub) == 0:
+                continue
+            has_m2 = sub["bvo_m2"].notna()
+            vals = sub.loc[has_m2, "bvo_m2"]
+            mediaan = float(vals.median()) if len(vals) else None
+            # Grote complexen staan in de BAG soms als één verblijfsobject
+            # (Hoog Catharijne: 94.598 m² GO). Zo'n registratie belandt bij de
+            # ene voorziening die er toevallig in valt en domineert dan het
+            # totaal. Daarom naast `m2_totaal` ook een uitschieterbestendige
+            # schatting (aantal × mediaan) plus het aantal uitschieters, in
+            # plaats van zulke objecten stilletjes weg te filteren.
+            n_uitschieters = (
+                int((vals > BVO_OUTLIER_FACTOR * mediaan).sum())
+                if mediaan and mediaan > 0
+                else 0
+            )
+            per_group_bvo.append(
+                {
+                    "key": g,
+                    "label": POI_GROUPS[g]["label"],
+                    "n": int(len(sub)),
+                    "n_met_m2": int(has_m2.sum()),
+                    "m2_totaal": round(float(sub["bvo_m2"].sum(skipna=True)), 0),
+                    "m2_typisch": (
+                        round(mediaan * len(vals), 0) if mediaan is not None else None
+                    ),
+                    "m2_mediaan": round(mediaan, 0) if mediaan is not None else None,
+                    "n_uitschieters": n_uitschieters,
+                    "zeker_pct": (
+                        round(float(sub.loc[has_m2, "doel_match"].mean()) * 100, 1)
+                        if has_m2.any()
+                        else 0.0
+                    ),
+                    # Op adres gekoppeld = exact de geregistreerde unit; de rest
+                    # is op ligging binnen het pand gekozen en dus een schatting.
+                    "adres_pct": (
+                        round(float(sub.loc[has_m2, "via_adres"].mean()) * 100, 1)
+                        if has_m2.any() and "via_adres" in sub.columns
+                        else 0.0
+                    ),
+                }
+            )
+        uniek = pois_m.drop_duplicates(subset="id") if "id" in pois_m.columns else pois_m
+        bvo_payload = {
+            "per_group": per_group_bvo,
+            "m2_totaal": round(float(uniek["bvo_m2"].sum(skipna=True)), 0),
+            "go_to_bvo": round(bag.GO_TO_BVO, 4),
+            "hansen_groups": bvo_groups,
+        }
+
     # --- Assemble result ----------------------------------------------------
     hexes_fc = gdf_to_feature_collection(df_out)
 
     if have_pois:
-        keep = [c for c in ("id", "category", "name") if c in pois_m.columns]
+        keep = [
+            c
+            for c in ("id", "category", "name", "bvo_m2", "gebruiksdoel", "doel_match")
+            if c in pois_m.columns
+        ]
         pois_pts = pois_m[keep].copy()
         if "name" not in pois_pts.columns:
             pois_pts["name"] = None
@@ -980,6 +1183,7 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
             "hexes": hexes_fc,
             "pois": pois_fc,
             "equity": equity_payload,
+            "bvo": bvo_payload,
             "summary": summary,
             "meta": meta,
         }

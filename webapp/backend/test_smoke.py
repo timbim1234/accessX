@@ -19,6 +19,8 @@ from shapely.geometry import Point, shape
 
 import analysis
 import local_osm
+import bag
+import poi_groups as pg
 from main import app
 
 from fastapi.testclient import TestClient
@@ -134,6 +136,102 @@ def main() -> int:
         f"is_valid={repaired.is_valid}, area={repaired.area:.6g}",
     )
 
+    # --- poi_groups: tag-matcher --------------------------------------------
+    # De categorie wordt in pois.parquet gebakken, dus de matcher moet exact
+    # doen wat de specs beloven. Let vooral op zwembad (particuliere tuinbaden
+    # eruit) en het onderscheid basis- / voortgezet onderwijs.
+    matcher_cases = [
+        ({"shop": "bakery"}, {"detailhandel_kls", "daily_needs"}),
+        ({"shop": "supermarket"}, {"detailhandel_grs", "daily_needs"}),
+        ({"shop": "vacant"}, set()),
+        ({"amenity": "school", "isced:level": "0;1"}, {"basis_onderwijs"}),
+        ({"amenity": "school", "school": "secondary"}, {"voortgezet_onderwijs"}),
+        ({"amenity": "school"}, {"onderwijs_overig"}),
+        ({"leisure": "swimming_pool"}, set()),
+        ({"leisure": "swimming_pool", "access": "private"}, set()),
+        ({"leisure": "sports_centre", "sport": "swimming"}, {"sporthal", "zwembad"}),
+        ({"leisure": "playground", "access": "private"}, set()),
+        ({"healthcare": "physiotherapist"}, {"sociaal_medisch"}),
+        ({"landuse": "forest"}, set()),
+    ]
+    wrong = [
+        (tags, sorted(pg.match_groups(tags)), sorted(want))
+        for tags, want in matcher_cases
+        if set(pg.match_groups(tags)) != want
+    ]
+    check(
+        f"poi_groups.match_groups: {len(matcher_cases)} tag-cases",
+        not wrong,
+        "" if not wrong else f"afwijkend: {wrong}",
+    )
+
+    # Pariteit scalair (prep-pad) vs. gevectoriseerd (Overpass-pad). Deze twee
+    # moeten identiek beslissen: de een bakt de categorie in pois.parquet, de
+    # ander bepaalt hem live uit de Overpass-respons.
+    tag_rows = [tags for tags, _ in matcher_cases]
+    tag_keys = sorted({k for t in tag_rows for k in t})
+    frame = gpd.GeoDataFrame(
+        {k: [t.get(k) for t in tag_rows] for k in tag_keys},
+        geometry=[Point(0, 0)] * len(tag_rows),
+        crs=4326,
+    )
+    mismatch = []
+    for group, spec in analysis.POI_GROUPS.items():
+        vec = analysis._matches_tags(frame, spec["match"]).tolist()
+        sca = [group in pg.match_groups(t) for t in tag_rows]
+        if vec != sca:
+            mismatch.append((group, vec, sca))
+    check(
+        "matcher-pariteit: _matches_tags (vectorized) == match_groups (scalair)",
+        not mismatch,
+        "" if not mismatch else f"verschil in {[m[0] for m in mismatch]}",
+    )
+
+    # De Overpass-query moet een superset zijn: elke key uit een leaf-spec zit
+    # erin, en negaties/AND-vervolgvoorwaarden verbreden hem niet (access mag
+    # er bijvoorbeeld niet in staan, dat zou elk pad ophalen).
+    qt = pg.query_tags(list(analysis.POI_GROUPS))
+    check(
+        "poi_groups.query_tags: superset zonder verbredende keys",
+        "access" not in qt and qt.get("shop") is True and "amenity" in qt,
+        f"keys={sorted(qt)}",
+    )
+
+    # --- bag: verblijfsobjecten filteren (offline) --------------------------
+    # 1 m² is in de BAG de placeholder voor "oppervlakte onbekend"; die mag geen
+    # voorziening worden. Puur woonfunctie hoort er ook niet in.
+    def _vbo(opp, doel, **extra):
+        props = {"identificatie": f"v{opp}", "pandidentificatie": "p1",
+                 "oppervlakte": opp, "gebruiksdoel": doel}
+        props.update(extra)
+        return {"properties": props,
+                "geometry": {"type": "Point", "coordinates": [134000.0, 455000.0]}}
+
+    frame = bag._vbo_frame([
+        _vbo(1, "winkelfunctie"),
+        _vbo(8, "winkelfunctie"),
+        _vbo(95, "winkelfunctie", postcode="3531 CS", openbare_ruimte="Kanaalstraat",
+             huisnummer=45, huisletter="a"),
+        _vbo(120, "woonfunctie"),
+        _vbo(140, "winkelfunctie,woonfunctie"),
+    ])
+    opps = sorted(frame["go_m2"].tolist())
+    check(
+        "bag._vbo_frame: 1 m²-placeholders en pure woonfunctie eruit",
+        opps == [95.0, 140.0],
+        f"overgebleven oppervlakten={opps}",
+    )
+    check(
+        "bag._vbo_frame: adres genormaliseerd + specificiteit geteld",
+        frame.iloc[0]["postcode"] == "3531CS"
+        and frame.iloc[0]["straat"] == "kanaalstraat"
+        and frame.iloc[0]["huisletter"] == "A"
+        and frame.iloc[0]["n_doelen"] == 1
+        and frame.iloc[1]["n_doelen"] == 2,
+        f"postcode={frame.iloc[0]['postcode']!r}, "
+        f"n_doelen={frame['n_doelen'].tolist()}",
+    )
+
     # --- lokale OSM-extract -------------------------------------------------
     avail = local_osm.local_data_available()
     check(
@@ -148,8 +246,8 @@ def main() -> int:
         try:
             pois = local_osm.load_pois_local(
                 aoi_buf,
-                ["daily_needs", "healthcare", "education",
-                 "open_space", "public_transport"],
+                ["daily_needs", "sociaal_medisch", "basis_onderwijs",
+                 "parken_natuur", "public_transport"],
             )
             cols_ok = {"id", "name", "category"}.issubset(set(pois.columns))
             crs_ok = pois.crs is not None and str(pois.crs).endswith("4326")
@@ -160,6 +258,51 @@ def main() -> int:
             )
         except Exception as exc:  # noqa: BLE001
             check("load_pois_local: geen fout", False, repr(exc))
+
+        # --- run_pipeline met bvo: BAG-koppeling (vereist netwerk) ----------
+        # Contract van result["bvo"] controleren. Is PDOK onbereikbaar, dan
+        # hoort de pipeline dóór te draaien met een waarschuwing i.p.v. te
+        # falen -- ook dat is hier een geldige uitkomst.
+        try:
+            bvo_res = analysis.run_pipeline(
+                _pipeline_params(
+                    square(5.104, 52.0905, 0.002, 0.001),
+                    poi_groups=["detailhandel_kls", "restaurant", "speeltuinen"],
+                    analyses=["counts", "bvo"],
+                )
+            )["result"]
+            payload = bvo_res.get("bvo")
+            if payload is None:
+                check(
+                    "run_pipeline bvo: pipeline draait door zonder BAG",
+                    any("BAG" in w or "vloeroppervlakte" in w.lower()
+                        for w in bvo_res["meta"]["warnings"]),
+                    f"warnings={bvo_res['meta']['warnings']}",
+                )
+            else:
+                groups = {g["key"]: g for g in payload["per_group"]}
+                # Buitenruimte hoort geen vloeroppervlakte te krijgen; dat is de
+                # kern van de pand-poort in bag.attach_floor_area.
+                buiten_leeg = groups.get("speeltuinen", {}).get("n_met_m2", 0) == 0
+                gebouw_gevuld = groups.get("detailhandel_kls", {}).get("n_met_m2", 0) > 0
+                check(
+                    "run_pipeline bvo: m² voor gebouwen, geen m² voor buitenruimte",
+                    {"per_group", "m2_totaal", "go_to_bvo"} <= set(payload)
+                    and buiten_leeg
+                    and gebouw_gevuld,
+                    f"totaal={payload.get('m2_totaal')}, "
+                    f"winkels={groups.get('detailhandel_kls', {}).get('n_met_m2')}, "
+                    f"speeltuinen={groups.get('speeltuinen', {}).get('n_met_m2')}",
+                )
+                poi_props = [f["properties"] for f in bvo_res["pois"]["features"]]
+                check(
+                    "run_pipeline bvo: POI-laag draagt bvo_m2 + doel_match",
+                    any(p.get("bvo_m2") for p in poi_props)
+                    and all("doel_match" in p for p in poi_props),
+                    f"{sum(1 for p in poi_props if p.get('bvo_m2'))}/{len(poi_props)} met m²",
+                )
+        except Exception as exc:  # noqa: BLE001
+            check("run_pipeline bvo: geen fout", False, repr(exc))
 
         # --- run_pipeline: summary + wat-als scenario (extra_pois) ----------
         # Lokale OSM/CBS: draait offline in seconden. Basis vs. scenario.
@@ -275,11 +418,12 @@ def main() -> int:
             r = client.get(f"/api/jobs/{job_id}")
             body = r.json() if r.status_code == 200 else {}
             check(
-                "GET /api/jobs/{id} -> 200 + geldige status + 10 stages",
+                "GET /api/jobs/{id} -> 200 + geldige status + alle stages",
                 r.status_code == 200
                 and body.get("status") in {"queued", "running", "done", "error"}
-                and len(body.get("stages", [])) == 10,
-                f"status={r.status_code}, jobstatus={body.get('status')!r}",
+                and len(body.get("stages", [])) == len(analysis.STAGES),
+                f"status={r.status_code}, jobstatus={body.get('status')!r}, "
+                f"stages={len(body.get('stages', []))}/{len(analysis.STAGES)}",
             )
             # Resultaat/uitkomst van de job zelf is hier NIET relevant (kan
             # falen door netwerk); we testen alleen de flow. Niet pollen.
@@ -295,7 +439,7 @@ def main() -> int:
             json={"polygon": tiny, "poi_groups": ["daily_needs"],
                   "analyses": ["counts"],
                   "extra_pois": [{"lon": 4.9041, "lat": 52.3676,
-                                  "category": "healthcare"}]},
+                                  "category": "sociaal_medisch"}]},
         )
         check(
             "POST /api/analyze extra_pois niet-geselecteerde groep -> 400",

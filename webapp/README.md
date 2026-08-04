@@ -77,17 +77,82 @@ een verse analyse draait overal in Nederland in seconden. Bestanden staan in
 meta.json), gegenereerd uit een Geofabrik-extract:
 
 ```powershell
-# eenmalig / bij een data-update (heel NL, ~19 min, ~1 GB parquet):
+# eenmalig / bij een data-update (heel NL, ~40 min, ~1 GB parquet):
 C:\Users\tim\.venvs\accessx\Scripts\python.exe prepare_local_data.py `
   "$env:LOCALAPPDATA\accessx_webapp_cache\local_osm\netherlands-latest.osm.pbf"
 ```
 
 `local_osm.build_graph_local` / `load_pois_local` filteren de parquet op de
 getekende polygoon (pyarrow bbox-pushdown). Buiten de dekking van de parquet valt
-de backend automatisch terug op OSMnx/Overpass. De lokale data is gebakken met de
-huidige `POI_GROUPS`; na een categorie-wijziging opnieuw preppen.
+de backend automatisch terug op OSMnx/Overpass.
 
-Huidige extract: `netherlands-latest.osm.pbf` → 13,3M edges, 12M nodes, 159.624 POIs.
+De categorie zit in `pois.parquet` gebakken, dus na een wijziging in
+`poi_groups.py` moet je opnieuw preppen. `meta.json` bevat daarom de lijst
+categorieën waarmee de extract is gebouwd; `local_osm.missing_categories()`
+vergelijkt die met de gevraagde selectie en de backend valt met een
+waarschuwing terug op Overpass zolang de extract verouderd is.
+
+## Vloeroppervlakte (BAG)
+
+Analyse `bvo` koppelt elke voorziening aan een BAG-verblijfsobject via PDOK's
+BAG-WFS (`backend/bag.py`, geen API-sleutel nodig). Levert:
+
+- `bvo_m2`, `gebruiksdoel` en `doel_match` per voorziening in de POI-laag;
+- `result["bvo"].per_group` — m² per categorie, met een uitschieterbestendige
+  schatting (`m2_typisch` = aantal × mediaan) naast het rauwe totaal;
+- `bvo_hansen_<groep>` per hex — bereikbaar vloeroppervlak: dezelfde
+  Hansen-formule, maar met m² als gewicht in plaats van aantallen.
+
+Koppelregel, in volgorde:
+
+1. **Op adres** — `addr:street`/`addr:housenumber`/`addr:postcode` van de POI
+   tegen het adres van het verblijfsobject. Dat wijst precies één unit aan; 93%
+   van de kleinschalige detailhandel in OSM draagt een adres. De prep schrijft
+   die tags mee in `pois.parquet` (`addr_*`-kolommen), de Overpass-route neemt
+   ze rechtstreeks mee.
+2. **Op ligging** voor de rest: de POI moet ín een BAG-pand liggen
+   (buitenruimte hoort geen verblijfsobject te hebben), binnen dat pand wint een
+   passend `gebruiksdoel`, en de toewijzing is één-op-één zodat niet twintig
+   zaken in een winkelcentrum hetzelfde object claimen. Bij vergelijkbare
+   afstand wint het specifiekste gebruiksdoel (`winkelfunctie` boven
+   `winkelfunctie,woonfunctie`).
+
+Verblijfsobjecten onder `bag.MIN_VBO_M2` doen niet mee: de BAG voert 1 m² op waar
+de oppervlakte onbekend is. BAG levert gebruiksoppervlakte (NEN 2580);
+`bag.GO_TO_BVO` rekent om naar BVO. Per categorie rapporteert de backend
+`adres_pct` (hoe vaak exact gekoppeld) naast `zeker_pct` (gebruiksdoel plausibel).
+
+PDOK's WFS weigert paginering voorbij ~50.000 records, dus `_fetch_tiled` splitst
+de bbox in kwadranten tot elke tegel onder `bag.TILE_MAX` blijft — anders viel de
+vloeroppervlakte juist in dichte binnensteden weg. Zo'n analyse doet tientallen
+requests, dus `_get` herkanst transiente fouten (niet op 4xx). Boven
+`bag.MAX_VBO` verblijfsobjecten stopt de koppeling met een waarschuwing en draait
+de rest van de analyse gewoon door.
+
+Gemeten over heel NL (15 min lopen, wijkniveau): Groningen-Binnenstad 47 s,
+Maastricht-Binnenstad 26 s, Almere-Buiten 22 s, Zuilen 18 s.
+
+## Voorzieningencategorieën
+
+`backend/poi_groups.py` is de enige bron van waarheid — gebruikt door de
+webapp-pipeline, de pbf-prep én `/api/presets`. De categorieën volgen de
+CityMaker-functiemixlegenda (sectie `functiemix`), aangevuld met wat een
+15-minutenstad-analyse nodig heeft maar daar niet in staat (sectie
+`bereikbaarheid`).
+
+Een categorie heeft een `match`-spec met vier bouwstenen:
+
+| vorm | betekenis |
+|---|---|
+| `{"amenity": ["school"], "shop": True}` | OR over (key, waarde)-paren |
+| `{"any": [spec, ...]}` | OR |
+| `{"all": [spec, ...]}` | AND |
+| `{"not": spec}` | NOT |
+
+Zet bij `all` de selectiefste voorwaarde vooraan: `query_tags()` bouwt de
+Overpass-query uit alleen het eerste kind (elke AND-voorwaarde is op zich al een
+superset). Diezelfde wandeling levert de key-index waarmee de prep per object
+maar een paar categorieën hoeft te evalueren in plaats van alle 25.
 
 ## Prestaties
 

@@ -65,6 +65,7 @@ def health() -> dict:
 def presets() -> dict:
     return {
         "poi_groups": analysis.POI_GROUPS,
+        "sections": analysis.SECTIONS,
         "defaults": analysis.DEFAULTS,
         "limits": analysis.LIMITS,
     }

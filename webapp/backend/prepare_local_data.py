@@ -29,7 +29,13 @@ import numpy as np
 import osmium
 import pyarrow as pa
 import pyarrow.parquet as pq
+import shapely
 import shapely.wkb
+
+# poi_groups is dependency-free (no geopandas/osmnx), so importing it here keeps
+# --help cheap while guaranteeing prep and runtime share one matcher.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from poi_groups import POI_GROUPS, match_groups  # noqa: E402
 
 # Earth radius used by OSMnx (distance.great_circle) -- keep length parity.
 EARTH_RADIUS_M = 6371009.0
@@ -123,22 +129,6 @@ def _haversine_m(
     return 2.0 * EARTH_RADIUS_M * np.arcsin(np.sqrt(a))
 
 
-def _match_groups(tags: Any, poi_groups: Dict[str, Dict[str, Any]]) -> List[str]:
-    """Return every POI group whose tag dict matches these tags.
-
-    Same semantics as analysis._matches_tags: a key must be present and its
-    value present in the group's value list (or values is True = key present).
-    One feature can match multiple groups.
-    """
-    matched: List[str] = []
-    for group, spec in poi_groups.items():
-        for key, values in spec["tags"].items():
-            if key in tags:
-                val = tags[key]
-                if values is True or val in values:
-                    matched.append(group)
-                    break
-    return matched
 
 
 # ---------------------------------------------------------------------------
@@ -224,28 +214,66 @@ class _PoiHandler(osmium.SimpleHandler):
         self.cats: List[str] = []
         self.xs: List[float] = []
         self.ys: List[float] = []
+        # Adres: nodig om de BAG-vloeroppervlakte op adres te koppelen i.p.v.
+        # op afstand. 93% van de kleinschalige detailhandel draagt straat +
+        # huisnummer, en in een plint met acht zaken naast elkaar is dat het
+        # verschil tussen de juiste unit en die van de buurman.
+        self.streets: List[Optional[str]] = []
+        self.numbers: List[Optional[str]] = []
+        self.postcodes: List[Optional[str]] = []
+        # Node points per category, for the node-in-area dedup below. Filled
+        # during the node pass; frozen into STRtrees on the first area callback.
+        self._node_pts: Dict[str, List[Any]] = {}
+        self._trees: Optional[Dict[str, Any]] = None
+        self.n_dedup = 0
 
     def _emit(
-        self, osm_id: str, name: Optional[str], x: float, y: float, matched: List[str]
+        self,
+        osm_id: str,
+        name: Optional[str],
+        x: float,
+        y: float,
+        matched: List[str],
+        tags: Any = None,
     ) -> None:
+        street = tags.get("addr:street") if tags is not None else None
+        number = tags.get("addr:housenumber") if tags is not None else None
+        postcode = tags.get("addr:postcode") if tags is not None else None
         for g in matched:
             self.ids.append(osm_id)
             self.names.append(name)
             self.cats.append(g)
             self.xs.append(x)
             self.ys.append(y)
+            self.streets.append(street)
+            self.numbers.append(number)
+            self.postcodes.append(postcode)
 
     def node(self, n: Any) -> None:  # noqa: D401 (osmium callback)
-        matched = _match_groups(n.tags, self.groups)
+        matched = match_groups(n.tags, self.groups)
         if not matched:
             return
         loc = n.location
         if not loc.valid():
             return
-        self._emit(f"node/{n.id}", n.tags.get("name"), loc.lon, loc.lat, matched)
+        self._emit(f"node/{n.id}", n.tags.get("name"), loc.lon, loc.lat, matched,
+                   n.tags)
+        pt = shapely.Point(loc.lon, loc.lat)
+        for g in matched:
+            self._node_pts.setdefault(g, []).append(pt)
+
+    def _build_trees(self) -> Dict[str, Any]:
+        """Freeze the collected node points into one STRtree per category.
+
+        Safe on the first area callback: osmium processes all nodes before any
+        way/relation, and areas are assembled from those.
+        """
+        trees = {g: shapely.STRtree(pts) for g, pts in self._node_pts.items() if pts}
+        self._node_pts = {}  # the points live on inside the trees
+        return trees
 
     def area(self, a: Any) -> None:  # noqa: D401 (osmium callback)
-        matched = _match_groups(a.tags, self.groups)
+        matched = match_groups(a.tags, self.groups)
         if not matched:
             return
         try:
@@ -259,13 +287,129 @@ class _PoiHandler(osmium.SimpleHandler):
         cent = geom.centroid
         if cent.is_empty:
             return
+
+        # Dedup: a facility mapped as BOTH a node and its building/grounds
+        # polygon would otherwise be counted twice (measured on the NL extract:
+        # 28% of school nodes sit inside a school area). Keep the node -- the
+        # more precise representation -- and drop the enclosing area for that
+        # category only.
+        if self._trees is None:
+            self._trees = self._build_trees()
+        kept = []
+        for g in matched:
+            tree = self._trees.get(g)
+            if tree is not None and len(tree.query(geom, predicate="contains")):
+                self.n_dedup += 1
+                continue
+            kept.append(g)
+        if not kept:
+            return
+
         osm_id = f"way/{a.orig_id()}" if a.from_way() else f"relation/{a.orig_id()}"
-        self._emit(osm_id, a.tags.get("name"), float(cent.x), float(cent.y), matched)
+        self._emit(osm_id, a.tags.get("name"), float(cent.x), float(cent.y), kept,
+                   a.tags)
+
+
+class _GreenHandler(osmium.SimpleHandler):
+    """Groenvlakken als polygoon, voor de 300 m-norm uit de 3-30-300-regel.
+
+    Anders dan bij de POI's blijft hier de vórm bewaard. Voor "ligt er groen
+    binnen 300 m" telt de afstand tot de rand van het park, niet tot het
+    middelpunt: bij een park van 20 ha scheelt dat honderden meters, en dan
+    meet je iets anders dan de norm bedoelt.
+
+    Vandaar ook dat bos, heide en grasland hier wél meedoen terwijl ze als
+    POI-categorie bewust ontbreken -- als vlak zijn ze precies goed, als
+    centroide onbruikbaar.
+    """
+
+    #: Oppervlakte-drempel: een snipper berm is geen park. 0,5 ha is de
+    #: gangbare ondergrens bij de 300 m-norm.
+    MIN_AREA_M2 = 5_000.0
+
+    TAGS = {
+        "leisure": {
+            "park", "nature_reserve", "recreation_ground", "common", "dog_park",
+            "garden",
+        },
+        "landuse": {
+            "forest", "grass", "meadow", "recreation_ground", "village_green",
+            "greenery", "orchard",
+        },
+        "natural": {"wood", "heath", "scrub", "grassland", "beach", "shrubbery"},
+    }
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.wkbfab = osmium.geom.WKBFactory()
+        self.wkbs: List[bytes] = []
+        self.soorten: List[str] = []
+        self.areas: List[float] = []
+        self.minx: List[float] = []
+        self.miny: List[float] = []
+        self.maxx: List[float] = []
+        self.maxy: List[float] = []
+
+    def area(self, a: Any) -> None:  # noqa: D401 (osmium callback)
+        soort = None
+        for key, values in self.TAGS.items():
+            v = a.tags.get(key)
+            if v in values:
+                soort = f"{key}={v}"
+                break
+        if soort is None:
+            return
+        # Privétuinen eruit: leisure=garden is in NL grotendeels achtertuin.
+        if soort == "leisure=garden" and a.tags.get("access") in (
+            "private", "no", "customers", None
+        ):
+            return
+        if a.tags.get("access") in ("private", "no"):
+            return
+        try:
+            geom = shapely.wkb.loads(bytes.fromhex(self.wkbfab.create_multipolygon(a)))
+        except Exception:
+            return
+        if geom.is_empty:
+            return
+        # Oppervlakte in m2 uit graden: op NL-breedte is 1 graad lengte ~67 km
+        # en 1 graad breedte ~111 km. Ruim genoeg voor een 0,5 ha-drempel.
+        area_m2 = float(geom.area) * 67_000.0 * 111_000.0
+        if area_m2 < self.MIN_AREA_M2:
+            return
+        bounds = geom.bounds
+        self.wkbs.append(shapely.wkb.dumps(geom))
+        self.soorten.append(soort)
+        self.areas.append(area_m2)
+        self.minx.append(bounds[0])
+        self.miny.append(bounds[1])
+        self.maxx.append(bounds[2])
+        self.maxy.append(bounds[3])
 
 
 # ---------------------------------------------------------------------------
 # Parquet writers
 # ---------------------------------------------------------------------------
+
+
+def _write_green(h: _GreenHandler, out_dir: Path) -> int:
+    minx = np.asarray(h.minx, dtype=np.float32)
+    miny = np.asarray(h.miny, dtype=np.float32)
+    order = np.lexsort((np.round(miny.astype(np.float64), 1),
+                        np.round(minx.astype(np.float64), 1)))
+    table = pa.table(
+        {
+            "wkb": pa.array(h.wkbs, type=pa.binary()),
+            "soort": pa.array(h.soorten, type=pa.string()),
+            "area_m2": np.asarray(h.areas, dtype=np.float64),
+            "minx": minx,
+            "miny": miny,
+            "maxx": np.asarray(h.maxx, dtype=np.float32),
+            "maxy": np.asarray(h.maxy, dtype=np.float32),
+        }
+    ).take(pa.array(order))
+    pq.write_table(table, str(out_dir / "green.parquet"))
+    return table.num_rows
 
 
 def _write_edges(h: _NetworkHandler, out_dir: Path) -> int:
@@ -339,6 +483,9 @@ def _write_pois(h: _PoiHandler, out_dir: Path) -> int:
             "id": pa.array(h.ids, type=pa.string()),
             "name": pa.array(h.names, type=pa.string()),
             "category": pa.array(h.cats, type=pa.string()),
+            "addr_street": pa.array(h.streets, type=pa.string()),
+            "addr_housenumber": pa.array(h.numbers, type=pa.string()),
+            "addr_postcode": pa.array(h.postcodes, type=pa.string()),
             "x": xs,
             "y": ys,
         }
@@ -391,12 +538,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     out_dir = Path(os.path.expandvars(args.out_dir)) if args.out_dir else _default_out_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Import POI_GROUPS from analysis.py as the single source of truth. Done
-    # here (not at module import) so --help stays cheap and independent of the
-    # heavy geopandas/osmnx/accessx stack.
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from analysis import POI_GROUPS  # noqa: E402
-
     print(f"Prep gestart voor: {pbf}")
     print(f"Uitvoermap:        {out_dir}")
     t_start = time.perf_counter()
@@ -421,7 +562,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     ph = _PoiHandler(POI_GROUPS)
     ph.apply_file(str(pbf), locations=True, idx="flex_mem")
     t_poi = time.perf_counter() - t0
-    print(f"  POI-features verwerkt in {t_poi:.1f}s: {len(ph.ids)} rijen")
+    print(
+        f"  POI-features verwerkt in {t_poi:.1f}s: {len(ph.ids)} rijen "
+        f"({ph.n_dedup} dubbele vlakken overgeslagen)"
+    )
 
     t0 = time.perf_counter()
     n_pois = _write_pois(ph, out_dir)
@@ -435,6 +579,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "n_edges": int(n_edges),
         "n_nodes": int(n_nodes),
         "n_pois": int(n_pois),
+        # The category is baked into pois.parquet, so record which categories
+        # this extract was built with. The backend refuses to serve POIs from a
+        # stale extract that predates a POI_GROUPS change.
+        "categories": sorted(POI_GROUPS),
     }
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 

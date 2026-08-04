@@ -79,6 +79,7 @@ export default function Results({
   const groupKeys = Object.keys(presets?.poi_groups || {});
   const nPois = meta.n_pois || {};
   const summary = result.summary || null;
+  const bvo = result.bvo || null;
   const baselineSummary = baselineResult?.summary || null;
   const hasScenario = Boolean(baselineResult);
   const placed = extraPois || [];
@@ -94,6 +95,48 @@ export default function Results({
           groupColorMap={groupColorMap}
         />
       )}
+
+      {bvo?.per_group?.length ? (
+        <div className="bvo">
+          <h3>Vloeroppervlakte (BAG)</h3>
+          <p className="hint small">
+            {fmt(bvo.m2_totaal, 0)} m² BVO in totaal. Buitenruimte zoals parken en
+            speeltuinen heeft geen verblijfsobject en dus terecht geen m².
+          </p>
+          <table className="bvo-table">
+            <tbody>
+              {bvo.per_group
+                .filter((g) => g.n_met_m2 > 0)
+                .map((g) => (
+                  <tr key={g.key}>
+                    <td>
+                      <span className="dot" style={{ background: groupColorMap[g.key] }} />
+                      {g.label}
+                      <span className="bvo-sub">
+                        typisch {fmt(g.m2_typisch, 0)} m²
+                        {g.adres_pct > 0 ? ` · ${fmt(g.adres_pct, 0)}% op adres` : ""}
+                        {" · "}
+                        {fmt(g.zeker_pct, 0)}% doel klopt
+                        {g.n_met_m2 < g.n ? ` · ${g.n_met_m2}/${g.n} gekoppeld` : ""}
+                      </span>
+                    </td>
+                    <td className="num">
+                      {fmt(g.m2_totaal, 0)}
+                      {g.n_uitschieters > 0 ? (
+                        <span
+                          className="bvo-flag"
+                          title={`${g.n_uitschieters} uitschieter(s): waarschijnlijk een heel complex dat als één verblijfsobject is geregistreerd. Kijk dan naar "typisch".`}
+                        >
+                          ⚠
+                        </span>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
 
       <label className="field">
         <span>Kaartmetriek</span>
