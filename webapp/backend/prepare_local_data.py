@@ -327,14 +327,28 @@ class _GreenHandler(osmium.SimpleHandler):
     #: gangbare ondergrens bij de 300 m-norm.
     MIN_AREA_M2 = 5_000.0
 
+    #: Bovengrens voor leisure=nature_reserve. De tien grootste reservaten in
+    #: NL zijn Waddenzee, Noordzeekustzone, IJsselmeer/Markermeer en Voordelta:
+    #: samen 71% van alle reservaat-oppervlakte, en allemaal zeegebied waar je
+    #: niet in kunt wandelen. Ze dragen zelf geen water-tag, dus omvang is het
+    #: enige beschikbare onderscheid. Aanname: een NL-natuurgebied op het land
+    #: is als losse OSM-polygoon nooit groter dan dit (de Veluwe staat als bos
+    #: gemapt, de Oostvaardersplassen zijn ~5.600 ha).
+    MAX_RESERVE_M2 = 100_000_000.0  # 10.000 ha
+
+    #: Alleen openbaar toegankelijk groen. Agrarisch land (landuse=meadow,
+    #: orchard, farmland) en bermen/gazons (landuse=grass) doen NIET mee: met
+    #: die erbij beslaat "groen" 32.867 km², bijna de hele landoppervlakte van
+    #: Nederland, en dan haalt elk plattelandsadres de norm zonder dat er een
+    #: park in de buurt is. Weiland is groen om naar te kijken, geen groen om
+    #: in te wandelen.
     TAGS = {
         "leisure": {
             "park", "nature_reserve", "recreation_ground", "common", "dog_park",
             "garden",
         },
         "landuse": {
-            "forest", "grass", "meadow", "recreation_ground", "village_green",
-            "greenery", "orchard",
+            "forest", "recreation_ground", "village_green", "greenery",
         },
         "natural": {"wood", "heath", "scrub", "grassland", "beach", "shrubbery"},
     }
@@ -366,6 +380,16 @@ class _GreenHandler(osmium.SimpleHandler):
             return
         if a.tags.get("access") in ("private", "no"):
             return
+        # Water eruit. De grote natuurreservaten in NL zijn Waddenzee,
+        # Oosterschelde en Noordzeekustzone: samen goed voor 16.630 km², meer
+        # dan de helft van het land. Je kunt er niet in wandelen, dus voor een
+        # 300 m-loopnorm hoort het er niet bij.
+        if (
+            a.tags.get("natural") in ("water", "wetland", "bay", "strait", "shoal")
+            or a.tags.get("landuse") in ("basin", "reservoir", "salt_pond", "aquaculture")
+            or "waterway" in a.tags
+        ):
+            return
         try:
             geom = shapely.wkb.loads(bytes.fromhex(self.wkbfab.create_multipolygon(a)))
         except Exception:
@@ -376,6 +400,8 @@ class _GreenHandler(osmium.SimpleHandler):
         # en 1 graad breedte ~111 km. Ruim genoeg voor een 0,5 ha-drempel.
         area_m2 = float(geom.area) * 67_000.0 * 111_000.0
         if area_m2 < self.MIN_AREA_M2:
+            return
+        if soort == "leisure=nature_reserve" and area_m2 > self.MAX_RESERVE_M2:
             return
         bounds = geom.bounds
         self.wkbs.append(shapely.wkb.dumps(geom))
@@ -524,7 +550,37 @@ def build_parser() -> argparse.ArgumentParser:
             "of $ACCESSX_LOCAL_OSM)"
         ),
     )
+    p.add_argument(
+        "--only",
+        choices=["alles", "groen"],
+        default="alles",
+        help=(
+            "'groen' schrijft alleen green.parquet (groenvlakken voor de "
+            "300 m-norm) en laat netwerk en POI's ongemoeid -- handig om die "
+            "laag toe te voegen zonder de volledige prep opnieuw te draaien."
+        ),
+    )
     return p
+
+
+def _green_pass(pbf: Path, out_dir: Path) -> int:
+    print("Groenvlakken uitlezen (areas)...")
+    t0 = time.perf_counter()
+    gh = _GreenHandler()
+    gh.apply_file(str(pbf), locations=True, idx="flex_mem")
+    n = _write_green(gh, out_dir)
+    ha = sum(gh.areas) / 10_000.0
+    print(
+        f"  green.parquet geschreven in {time.perf_counter() - t0:.1f}s: "
+        f"{n} vlakken, samen {ha:,.0f} ha".replace(",", ".")
+    )
+    per_soort: Dict[str, List[float]] = {}
+    for soort, opp in zip(gh.soorten, gh.areas):
+        per_soort.setdefault(soort, []).append(opp)
+    for soort, opps in sorted(per_soort.items(), key=lambda kv: -sum(kv[1]))[:10]:
+        print(f"    {soort:32s} {len(opps):7d} vlakken  "
+              f"{sum(opps)/10_000.0:10,.0f} ha".replace(",", "."))
+    return n
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -541,6 +597,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"Prep gestart voor: {pbf}")
     print(f"Uitvoermap:        {out_dir}")
     t_start = time.perf_counter()
+
+    if args.only == "groen":
+        n_green = _green_pass(pbf, out_dir)
+        meta_path = out_dir / "meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+        meta["n_green"] = int(n_green)
+        meta["green_min_area_m2"] = _GreenHandler.MIN_AREA_M2
+        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        print(f"Klaar. totaal={time.perf_counter() - t_start:.1f}s")
+        return 0
 
     # --- Network pass -----------------------------------------------------
     print("Netwerk uitlezen (ways -> edges/nodes)...")
@@ -572,6 +638,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"  pois.parquet geschreven in {time.perf_counter() - t0:.1f}s")
     del ph
 
+    # --- Green pass -------------------------------------------------------
+    n_green = _green_pass(pbf, out_dir)
+
     # --- meta.json --------------------------------------------------------
     meta = {
         "source": pbf.name,
@@ -583,6 +652,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         # this extract was built with. The backend refuses to serve POIs from a
         # stale extract that predates a POI_GROUPS change.
         "categories": sorted(POI_GROUPS),
+        "n_green": int(n_green),
+        "green_min_area_m2": _GreenHandler.MIN_AREA_M2,
     }
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 

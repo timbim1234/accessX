@@ -255,6 +255,58 @@ p {
   accent-color: var(--data-sky-strong);
 }
 
+/* ---------- Groen binnen 300 m (3-30-300) ---------- */
+.groen-card {
+  background: var(--surface-sage, rgba(81, 214, 134, 0.09));
+  border-radius: var(--radius-md, 10px);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.groen-card h3 {
+  margin-top: 0;
+}
+
+.groen-score {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.groen-score strong {
+  font-size: 30px;
+  line-height: 1.1;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--data-sage-strong, #3fa86a);
+}
+
+.groen-score .unit {
+  font-size: 15px;
+  color: var(--data-sage-strong, #3fa86a);
+}
+
+.groen-score-label {
+  font: var(--body-light);
+  color: var(--clay-80);
+  margin-left: var(--space-1);
+}
+
+.groen-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.07);
+  overflow: hidden;
+  margin: var(--space-2) 0 var(--space-1);
+}
+
+.groen-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--data-sage-strong, #3fa86a);
+}
+
 /* ---------- Vloeroppervlakte (BAG) ----------
    Twee kolommen: het paneel is ~290px breed, daar passen geen vier in.
    De nuance (typisch/zeker/dekking) staat op een subregel onder de categorie. */

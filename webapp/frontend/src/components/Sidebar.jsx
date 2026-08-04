@@ -28,6 +28,7 @@ export const ANALYSIS_OPTIONS = [
   { key: "2sfca", label: "2SFCA vraag/aanbod" },
   { key: "equity", label: "Verdeling & Gini" },
   { key: "bvo", label: "Vloeroppervlakte (BAG)" },
+  { key: "groen300", label: "Groen binnen 300 m" },
 ];
 
 export default function Sidebar({

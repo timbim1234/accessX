@@ -80,6 +80,7 @@ export default function Results({
   const nPois = meta.n_pois || {};
   const summary = result.summary || null;
   const bvo = result.bvo || null;
+  const groen = result.groen || null;
   const baselineSummary = baselineResult?.summary || null;
   const hasScenario = Boolean(baselineResult);
   const placed = extraPois || [];
@@ -95,6 +96,32 @@ export default function Results({
           groupColorMap={groupColorMap}
         />
       )}
+
+      {groen ? (
+        <div className="groen-card">
+          <h3>Groen binnen {fmt(groen.norm_m, 0)} m</h3>
+          <div className="groen-score">
+            <strong>{fmt(groen.pct_binnen_norm, 0)}</strong>
+            <span className="unit">%</span>
+            <span className="groen-score-label">
+              van de {groen.gewogen ? "inwoners" : "hexes"} haalt de norm
+            </span>
+          </div>
+          <div className="groen-bar">
+            <div
+              className="groen-bar-fill"
+              style={{ width: `${Math.max(0, Math.min(100, groen.pct_binnen_norm))}%` }}
+            />
+          </div>
+          <p className="hint small">
+            Mediaan {fmt(groen.mediaan_afstand_m, 0)} m lopen naar de rand van het
+            dichtstbijzijnde groen van minstens {fmt(groen.min_area_m2 / 10000, 1)} ha.
+            {" "}
+            {fmt(groen.n_groenvlakken, 0)} groenvlakken, {fmt(groen.groen_ha, 0)} ha in
+            en om het gebied.
+          </p>
+        </div>
+      ) : null}
 
       {bvo?.per_group?.length ? (
         <div className="bvo">

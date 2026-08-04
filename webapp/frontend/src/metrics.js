@@ -103,6 +103,8 @@ export function metricLabel(metric, presets) {
   const groups = presets?.poi_groups || {};
   if (metric === "population") return "Bevolking (CBS)";
   if (metric === "sufficient_score") return "15-minutenstad-score (0–1)";
+  if (metric === "groen_afstand_m") return "Loopafstand tot groen (m)";
+  if (metric === "groen_binnen_300m") return "Groen binnen 300 m (ja/nee)";
   if (metric === "hansen_total") return "Hansen: totaal";
   if (metric === "sfca_total") return "2SFCA: totaal";
   const gk = metricGroupKey(metric, Object.keys(groups));
@@ -119,6 +121,8 @@ export function metricLabel(metric, presets) {
 }
 
 export function metricUnit(metric) {
+  if (metric === "groen_afstand_m") return "meter";
+  if (metric === "groen_binnen_300m") return "1 = ja";
   if (metric.startsWith("bvo_")) return "m²";
   if (metric.startsWith("count_") && !metric.endsWith("_sufficient")) return "aantal";
   if (metric.startsWith("nearest_cost_")) return "minuten";
@@ -127,6 +131,7 @@ export function metricUnit(metric) {
 }
 
 export function metricDecimals(metric) {
+  if (metric.startsWith("groen_")) return 0;
   if (metric.startsWith("count_")) return 0;
   if (metric.startsWith("bvo_")) return 0;
   if (metric === "population" || metric.startsWith("pop_")) return 0;
@@ -197,6 +202,12 @@ export function buildMetricOptions(result, presets) {
     if (options.length) out.push({ label: g.label, options });
   }
   const general = [];
+  if ("groen_afstand_m" in props) {
+    general.push({ value: "groen_afstand_m", label: "Loopafstand tot groen (m)" });
+  }
+  if ("groen_binnen_300m" in props) {
+    general.push({ value: "groen_binnen_300m", label: "Groen binnen 300 m (ja/nee)" });
+  }
   if ("hansen_total" in props) general.push({ value: "hansen_total", label: "Hansen: totaal" });
   if ("sfca_total" in props) general.push({ value: "sfca_total", label: "2SFCA: totaal" });
   if ("population" in props) general.push({ value: "population", label: "Bevolking (CBS)" });

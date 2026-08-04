@@ -59,7 +59,10 @@ DEFAULTS: Dict[str, Any] = {
     "max_minutes": 15,
     "hex_resolution": 9,
     "selected_groups": list(pg.DEFAULT_SELECTED),
-    "analyses": ["counts", "nearest", "hansen", "population", "2sfca", "equity", "bvo"],
+    "analyses": [
+        "counts", "nearest", "hansen", "population", "2sfca", "equity", "bvo",
+        "groen300",
+    ],
 }
 
 LIMITS: Dict[str, Any] = {"max_area_km2": 250, "warn_area_km2": 40}
@@ -69,8 +72,25 @@ LIMITS: Dict[str, Any] = {"max_area_km2": 250, "warn_area_km2": 40}
 # geregistreerd. Wordt gerapporteerd, niet weggefilterd.
 BVO_OUTLIER_FACTOR = 10.0
 
+# --- 300 m-norm voor groen (3-30-300) ---------------------------------------
+# De norm: iedere woning binnen 300 m van een park of groengebied. Gemeten als
+# loopafstand over het netwerk naar de RAND van het groen -- niet hemelsbreed en
+# niet naar het middelpunt. Bij een park van 20 ha ligt de centroide honderden
+# meters van de ingang; dan meet je iets anders dan de norm bedoelt.
+GREEN_DISTANCE_M = 300.0
+#: Ondergrens oppervlakte: een berm is geen park. 0,5 ha is gangbaar.
+GREEN_MIN_AREA_M2 = 5_000.0
+#: Om de hoeveel meter een punt op de rand van een groenvlak wordt gezet. Die
+#: punten zijn de "ingangen" waarnaar de loopafstand wordt gemeten.
+GREEN_EDGE_STEP_M = 25.0
+#: Plafond per vlak, zodat een bos van 500 ha niet duizenden punten oplevert.
+GREEN_MAX_POINTS_PER_AREA = 200
+#: Zoekvenster: verder dan dit hoeft niet gemeten te worden voor een 300 m-norm.
+GREEN_MAX_SEARCH_M = 1_500.0
+
 ANALYSIS_KEYS = [
     "counts", "nearest", "hansen", "population", "2sfca", "equity", "bvo",
+    "groen300",
 ]
 
 # Ordered stage definitions (key, Dutch label).
@@ -85,6 +105,7 @@ STAGES: List[Tuple[str, str]] = [
     ("nearest", "Dichtstbijzijnde voorziening"),
     ("hansen", "Hansen-bereikbaarheid"),
     ("sfca", "2SFCA (vraag/aanbod)"),
+    ("groen300", "Groen binnen 300 m"),
     ("equity", "Verdeling & Gini"),
 ]
 
@@ -265,6 +286,46 @@ def _matches_tags(features: gpd.GeoDataFrame, spec: Dict[str, Any]) -> pd.Series
             vals = [values] if isinstance(values, str) else list(values)
             mask |= col.isin(vals)
     return mask
+
+
+def green_entry_points(green_m: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Punten op de rand van elk groenvlak, als 'ingangen' voor de 300 m-norm.
+
+    De afstand tot een park hoort te worden gemeten tot waar je het binnengaat.
+    Door de omtrek te bemonsteren en die punten als voorziening aan te bieden,
+    rekent de bestaande routeerfunctie precies dat uit: de loopafstand tot het
+    dichtstbijzijnde punt op de rand.
+
+    `green_m` moet in een metrisch CRS staan (stappen zijn in meters).
+    """
+    xs: List[float] = []
+    ys: List[float] = []
+    for geom in green_m.geometry:
+        if geom is None or geom.is_empty:
+            continue
+        rings = []
+        if geom.geom_type == "Polygon":
+            rings = [geom.exterior]
+        elif geom.geom_type == "MultiPolygon":
+            rings = [g.exterior for g in geom.geoms]
+        for ring in rings:
+            omtrek = float(ring.length)
+            if omtrek <= 0:
+                continue
+            n = int(min(GREEN_MAX_POINTS_PER_AREA, max(4, omtrek // GREEN_EDGE_STEP_M)))
+            for t in np.linspace(0.0, omtrek, n, endpoint=False):
+                p = ring.interpolate(float(t))
+                xs.append(p.x)
+                ys.append(p.y)
+    if not xs:
+        return gpd.GeoDataFrame(
+            {"id": [], "category": []}, geometry=[], crs=green_m.crs
+        )
+    return gpd.GeoDataFrame(
+        {"id": [f"green/{i}" for i in range(len(xs))], "category": ["groen"] * len(xs)},
+        geometry=gpd.points_from_xy(xs, ys),
+        crs=green_m.crs,
+    )
 
 
 def _dedup_point_in_area(part: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -943,6 +1004,89 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
                 warn(f"Bereikbaar vloeroppervlak berekenen mislukt ({exc}).")
                 bvo_groups = []
 
+    # --- Stage: groen binnen 300 m (3-30-300) -------------------------------
+    groen_payload: Optional[Dict[str, Any]] = None
+    if "groen300" in analyses:
+        rep.start("groen300")
+        t0 = time.perf_counter()
+        try:
+            aoi_groen = aoi_m.copy()
+            # Ruim zoeken: groen net buiten het gebied telt gewoon mee voor wie
+            # aan de rand woont.
+            aoi_groen["geometry"] = aoi_groen.buffer(GREEN_MAX_SEARCH_M)
+            green = local_osm.load_green_local(
+                aoi_groen.to_crs(4326), min_area_m2=GREEN_MIN_AREA_M2
+            )
+            if len(green) == 0:
+                raise ValueError(
+                    "geen groenvlakken in de lokale extract (draai "
+                    "prepare_local_data.py --only groen)"
+                )
+            green_m = green.to_crs(METRIC_EPSG)
+            entries = green_entry_points(green_m)
+            if len(entries) == 0:
+                raise ValueError("groenvlakken zonder bruikbare rand")
+
+            near_groen = acx.compute_nearest_poi_cost(
+                graph,
+                hexes_m,
+                entries,
+                max_cost=GREEN_MAX_SEARCH_M,
+                cost_attr="length",  # meters, niet minuten
+                number_of_nearest=1,
+                output="wide",
+            )
+            col = next(
+                (c for c in near_groen.columns if c.startswith("nearest_cost_")), None
+            )
+            if col is None:
+                raise ValueError("routeren naar groen leverde geen kolom op")
+            df_out = df_out.merge(
+                pd.DataFrame(near_groen[["hex_id", col]]).rename(
+                    columns={col: "groen_afstand_m"}
+                ),
+                on="hex_id",
+                how="left",
+            )
+            binnen = pd.to_numeric(df_out["groen_afstand_m"], errors="coerce")
+            df_out["groen_binnen_300m"] = (binnen <= GREEN_DISTANCE_M).astype(int)
+
+            # Bevolkingsgewogen aandeel: de norm gaat over inwoners, niet hexes.
+            if has_pop and "population" in df_out.columns:
+                w = pd.to_numeric(df_out["population"], errors="coerce").fillna(0.0)
+            else:
+                w = pd.Series(1.0, index=df_out.index)
+            w_sum = float(w.sum())
+            pct = (
+                round(100.0 * float(w[df_out["groen_binnen_300m"] == 1].sum()) / w_sum, 1)
+                if w_sum > 0
+                else 0.0
+            )
+            mediaan = float(binnen.median()) if binnen.notna().any() else None
+            groen_payload = {
+                "norm_m": GREEN_DISTANCE_M,
+                "min_area_m2": GREEN_MIN_AREA_M2,
+                "pct_binnen_norm": pct,
+                "gewogen": bool(has_pop),
+                "mediaan_afstand_m": round(mediaan, 0) if mediaan is not None else None,
+                "n_groenvlakken": int(len(green)),
+                "groen_ha": round(float(green["area_m2"].sum()) / 10_000.0, 1),
+                "buiten_bereik": int(binnen.isna().sum()),
+            }
+            timings["groen300"] = time.perf_counter() - t0
+            rep.done(
+                "groen300",
+                timings["groen300"],
+                f"{pct:.0f}% binnen {GREEN_DISTANCE_M:.0f} m, "
+                f"{len(green)} groenvlakken",
+            )
+        except Exception as exc:
+            timings["groen300"] = time.perf_counter() - t0
+            warn(f"Groen binnen 300 m berekenen mislukt ({exc}).")
+            rep.skip("groen300", detail="mislukt")
+    else:
+        rep.skip("groen300")
+
     # --- Stage: equity ------------------------------------------------------
     equity_payload: Dict[str, Any] = {"gini": {}, "gini_weighted": False, "lorenz": {}}
     equity_ran = False
@@ -1184,6 +1328,7 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
             "pois": pois_fc,
             "equity": equity_payload,
             "bvo": bvo_payload,
+            "groen": groen_payload,
             "summary": summary,
             "meta": meta,
         }

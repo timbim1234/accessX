@@ -132,6 +132,37 @@ de rest van de analyse gewoon door.
 Gemeten over heel NL (15 min lopen, wijkniveau): Groningen-Binnenstad 47 s,
 Maastricht-Binnenstad 26 s, Almere-Buiten 22 s, Zuilen 18 s.
 
+## Groen binnen 300 m (3-30-300)
+
+Analyse `groen300` meet per hex de **loopafstand over het netwerk tot de rand**
+van het dichtstbijzijnde groengebied van minstens 0,5 ha, en rapporteert het
+bevolkingsgewogen aandeel dat binnen 300 m zit.
+
+Naar de rand, niet naar het middelpunt: bij een park van 20 ha ligt de centroïde
+honderden meters van de ingang. `analysis.green_entry_points` bemonstert daarom
+de omtrek van elk groenvlak (elke 25 m) en gebruikt die punten als "ingangen";
+de bestaande routeerfunctie rekent daar de kortste loopafstand naartoe
+(`cost_attr="length"`, dus in meters in plaats van minuten).
+
+De groenvlakken staan als polygoon in `green.parquet`, apart van `pois.parquet`.
+Toevoegen of verversen kan zonder de volledige prep:
+
+```powershell
+C:\Users\tim\.venvs\accessx\Scripts\python.exe prepare_local_data.py `
+  "$env:LOCALAPPDATA\accessx_webapp_cache\local_osm\netherlands-latest.osm.pbf" --only groen
+```
+
+Wat telt als groen (`_GreenHandler.TAGS`) is een inhoudelijke keuze met
+consequenties, gemeten op de NL-extract:
+
+| meegenomen | 953.820 ha over 161.928 vlakken |
+|---|---|
+| bewust eruit: `landuse=meadow`/`grass`/`orchard` | met die erbij: 3,3 mln ha — bijna de hele landoppervlakte, waardoor elk plattelandsadres de norm haalt |
+| bewust eruit: `nature_reserve` > 10.000 ha | dat zijn Waddenzee, Noordzeekustzone, IJsselmeer en Voordelta: 71% van alle reservaat-oppervlakte, en zeegebied waar je niet in wandelt. Ze dragen zelf geen water-tag, dus omvang is het enige onderscheid — een aanname, geen zekerheid |
+
+De ha-totalen tellen overlappende vlakken (een bos binnen een reservaat) dubbel;
+voor de afstandsmeting maakt dat niet uit.
+
 ## Voorzieningencategorieën
 
 `backend/poi_groups.py` is de enige bron van waarheid — gebruikt door de

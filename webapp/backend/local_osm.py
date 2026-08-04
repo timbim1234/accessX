@@ -39,6 +39,7 @@ LOCAL_OSM_DIR = Path(
 _EDGES_FILE = "edges.parquet"
 _NODES_FILE = "nodes.parquet"
 _POIS_FILE = "pois.parquet"
+_GREEN_FILE = "green.parquet"
 _META_FILE = "meta.json"
 
 # Extra margin (degrees) added to the query bbox so edges/nodes straddling the
@@ -124,6 +125,50 @@ def _get_pois_df() -> pd.DataFrame:
                 # POIs are small; keep the whole set in RAM as a DataFrame.
                 _pois_df = pd.read_parquet(str(_dir() / _POIS_FILE))
     return _pois_df
+
+
+def green_data_available() -> bool:
+    return (_dir() / _GREEN_FILE).is_file()
+
+
+def load_green_local(
+    aoi_buf_wgs84: gpd.GeoDataFrame, min_area_m2: float = 5_000.0
+) -> gpd.GeoDataFrame:
+    """Groenvlakken (polygonen) die de AOI raken, uit de lokale extract.
+
+    Anders dan bij POI's blijft de vorm bewaard: voor de 300 m-norm telt de
+    afstand tot de rand van het park, niet tot het middelpunt.
+    """
+    path = _dir() / _GREEN_FILE
+    if not path.is_file():
+        return gpd.GeoDataFrame({"soort": [], "area_m2": []}, geometry=[], crs=4326)
+
+    polygon = aoi_buf_wgs84.geometry.union_all()
+    minx, miny, maxx, maxy = polygon.bounds
+    tbl = pds.dataset(str(path), format="parquet").to_table(
+        columns=["wkb", "soort", "area_m2"],
+        filter=(
+            (pc.field("minx") <= maxx)
+            & (pc.field("maxx") >= minx)
+            & (pc.field("miny") <= maxy)
+            & (pc.field("maxy") >= miny)
+            & (pc.field("area_m2") >= float(min_area_m2))
+        ),
+    )
+    if tbl.num_rows == 0:
+        return gpd.GeoDataFrame({"soort": [], "area_m2": []}, geometry=[], crs=4326)
+
+    geoms = shapely.from_wkb(tbl.column("wkb").to_pylist())
+    gdf = gpd.GeoDataFrame(
+        {
+            "soort": tbl.column("soort").to_pylist(),
+            "area_m2": tbl.column("area_m2").to_pylist(),
+        },
+        geometry=list(geoms),
+        crs=4326,
+    )
+    # De bbox-filter is een grove voorselectie; nu de echte doorsnede.
+    return gdf[gdf.geometry.intersects(polygon)].reset_index(drop=True)
 
 
 def reset_caches() -> None:

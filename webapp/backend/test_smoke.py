@@ -15,7 +15,7 @@ import sys
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-from shapely.geometry import Point, shape
+from shapely.geometry import Point, Polygon, shape
 
 import analysis
 import local_osm
@@ -195,6 +195,31 @@ def main() -> int:
         "poi_groups.query_tags: superset zonder verbredende keys",
         "access" not in qt and qt.get("shop") is True and "amenity" in qt,
         f"keys={sorted(qt)}",
+    )
+
+    # --- groen: randpunten i.p.v. centroide (offline) -----------------------
+    # De 300 m-norm meet naar de RAND van een park. Bij een vierkant van
+    # 400x400 m ligt de centroide 200 m van elke rand: precies het verschil
+    # tussen "haalt de norm" en niet.
+    vierkant = Polygon([(0, 0), (400, 0), (400, 400), (0, 400)])
+    green_m = gpd.GeoDataFrame(
+        {"soort": ["leisure=park"]}, geometry=[vierkant], crs=analysis.METRIC_EPSG
+    )
+    entries = analysis.green_entry_points(green_m)
+    op_rand = all(vierkant.exterior.distance(p) < 1e-6 for p in entries.geometry)
+    check(
+        "green_entry_points: punten op de rand, niet in het midden",
+        len(entries) >= 16 and op_rand and set(entries["category"]) == {"groen"},
+        f"n={len(entries)}, allemaal op de rand={op_rand}",
+    )
+    check(
+        "green_entry_points: leeg vlak levert lege set",
+        len(
+            analysis.green_entry_points(
+                gpd.GeoDataFrame({"soort": []}, geometry=[], crs=analysis.METRIC_EPSG)
+            )
+        )
+        == 0,
     )
 
     # --- bag: verblijfsobjecten filteren (offline) --------------------------
