@@ -1,6 +1,27 @@
 import GeoSearch from "./GeoSearch.jsx";
 import ProgressList from "./ProgressList.jsx";
 import Results from "./Results.jsx";
+import Sectie from "./Sectie.jsx";
+
+// Kopvinkje dat de vinkjes eronder aan- of uitzet. Staat op half zodra er een
+// deel aan staat, zodat het niet suggereert dat alles uit is.
+function AllesVink({ keys, geselecteerd, onSet }) {
+  const aan = keys.length > 0 && keys.every((k) => geselecteerd.includes(k));
+  const deels = !aan && keys.some((k) => geselecteerd.includes(k));
+  return (
+    <input
+      type="checkbox"
+      className="alles-vink"
+      checked={aan}
+      ref={(el) => {
+        if (el) el.indeterminate = deels;
+      }}
+      onChange={(e) => onSet(keys, e.target.checked)}
+      aria-label="Alles aan- of uitzetten"
+      title="Alles aan- of uitzetten"
+    />
+  );
+}
 
 // Voorzieningengroepen gebundeld per sectie uit /api/presets, in de volgorde
 // die de backend aangeeft. Groepen zonder (bekende) sectie komen ongelabeld
@@ -38,7 +59,9 @@ export default function Sidebar({
   onSettingsChange,
   onModeChange,
   onToggleGroup,
+  onSetGroups,
   onToggleAnalysis,
+  onSetAnalyses,
   hasPolygon,
   areaKm2,
   canRun,
@@ -74,6 +97,8 @@ export default function Sidebar({
   viewMode,
   onViewModeChange,
 }) {
+  const alleGroepen = Object.keys(presets?.poi_groups || {});
+  const alleAnalyses = ANALYSIS_OPTIONS.map((o) => o.key);
   const limits = presets?.limits || { max_area_km2: 250, warn_area_km2: 40 };
   const tooBig = areaKm2 > limits.max_area_km2;
   const big = !tooBig && areaKm2 > limits.warn_area_km2;
@@ -155,35 +180,75 @@ export default function Sidebar({
         </label>
       </section>
 
-      <section>
-        <h2>Voorzieningen</h2>
+      <Sectie
+        className="acc-hoofd"
+        titel="Voorzieningen"
+        actie={
+          presets ? (
+            <AllesVink
+              keys={alleGroepen}
+              geselecteerd={settings.poi_groups}
+              onSet={onSetGroups}
+            />
+          ) : null
+        }
+        open
+      >
         {presets ? (
-          groupSections(presets).map(({ key: sectionKey, label, entries }) => (
-            <div key={sectionKey} className="group-section">
-              {label && <h3 className="group-section-title">{label}</h3>}
-              {entries.map(([key, g]) => (
-                <label key={key} className="check-row">
-                  <input
-                    type="checkbox"
-                    checked={settings.poi_groups.includes(key)}
-                    onChange={() => onToggleGroup(key)}
-                  />
-                  <span className="dot" style={{ background: groupColorMap[key] }} />
-                  <span>{g.label}</span>
-                </label>
-              ))}
-            </div>
-          ))
+          groupSections(presets).map(({ key: sectionKey, label, entries }) => {
+            const keys = entries.map(([k]) => k);
+            return (
+              <div key={sectionKey} className="group-section">
+                {label && (
+                  <div className="group-section-head">
+                    <AllesVink
+                      keys={keys}
+                      geselecteerd={settings.poi_groups}
+                      onSet={onSetGroups}
+                    />
+                    <h3 className="group-section-title">{label}</h3>
+                  </div>
+                )}
+                {entries.map(([key, g]) => (
+                  <label key={key} className="check-row">
+                    <input
+                      type="checkbox"
+                      checked={settings.poi_groups.includes(key)}
+                      onChange={() => onToggleGroup(key)}
+                    />
+                    <span className="dot" style={{ background: groupColorMap[key] }} />
+                    <span>{g.label}</span>
+                  </label>
+                ))}
+              </div>
+            );
+          })
         ) : (
           <p className="hint">Voorinstellingen laden…</p>
         )}
         {presets && settings.poi_groups.length === 0 && (
           <p className="warning small">Kies minstens één voorzieningengroep.</p>
         )}
-      </section>
+        {presets && settings.poi_groups.length > 12 && (
+          <p className="hint small">
+            Elke categorie kost rekentijd; met {settings.poi_groups.length} aangevinkt
+            duurt een analyse merkbaar langer.
+          </p>
+        )}
+      </Sectie>
 
-      <section>
-        <h2>Analyses</h2>
+      <Sectie
+        className="acc-hoofd"
+        titel="Analyses"
+        actie={
+          <AllesVink
+            keys={alleAnalyses}
+            geselecteerd={settings.analyses}
+            onSet={onSetAnalyses}
+          />
+        }
+        open
+      >
         {ANALYSIS_OPTIONS.map(({ key, label }) => {
           const disabled = key === "2sfca" && !settings.analyses.includes("population");
           return (
@@ -241,7 +306,7 @@ export default function Sidebar({
             </select>
           </label>
         </details>
-      </section>
+      </Sectie>
 
       <section>
         <button type="button" className="run-btn" disabled={!canRun} onClick={onRun}>

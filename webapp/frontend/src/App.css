@@ -255,16 +255,173 @@ p {
   accent-color: var(--data-sky-strong);
 }
 
+/* ---------- Uitklapbare resultaatsecties ---------- */
+.results-context {
+  font: var(--body-light);
+  color: var(--clay-60);
+  margin: 0 0 var(--space-3);
+}
+
+.acc {
+  border-top: 1px solid var(--clay-20, rgba(0, 0, 0, 0.08));
+}
+
+.acc:last-of-type {
+  border-bottom: 1px solid var(--clay-20, rgba(0, 0, 0, 0.08));
+  margin-bottom: var(--space-3);
+}
+
+.acc > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+/* Eigen chevron i.p.v. de driehoek van de browser (Safari heeft een eigen). */
+.acc > summary::-webkit-details-marker {
+  display: none;
+}
+
+.acc > summary::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--clay-60);
+  border-bottom: 1.5px solid var(--clay-60);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+  margin-left: 2px;
+}
+
+.acc[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.acc > summary:hover {
+  color: var(--lavender-100);
+}
+
+.acc > summary:focus-visible {
+  outline: 2px solid var(--lavender-100);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+.acc-titel {
+  font: var(--label-strong);
+  flex: 1;
+  min-width: 0;
+}
+
+/* In de zijbalk zijn dit hoofdsecties naast GEBIED en VERVOERSWIJZE, dus
+   krijgen ze dezelfde kop-stijl als die h2's. In het resultaatpaneel zijn het
+   subsecties onder "Resultaten" en blijft de zachtere variant staan. */
+.acc-hoofd > summary {
+  padding-top: var(--space-4);
+}
+
+.acc-hoofd .acc-titel {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--clay-60);
+}
+
+.acc-hoofd {
+  border-top: none;
+}
+
+.acc-hoofd:last-of-type {
+  border-bottom: none;
+}
+
+.acc-kern {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--clay-60);
+  white-space: nowrap;
+}
+
+.acc-body {
+  padding: 0 0 var(--space-3);
+}
+
+/* Uitleg van een methodiek: leesbaar, maar duidelijk ondergeschikt. */
+.methode {
+  font: var(--body-light);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--clay-60);
+  margin: 0 0 var(--space-2);
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--clay-20, rgba(0, 0, 0, 0.08));
+}
+
+.methode em {
+  font-style: normal;
+  color: var(--clay-80);
+}
+
+.methode strong {
+  font-weight: 500;
+  color: var(--clay-80);
+}
+
+/* Sleutel-waardelijstjes binnen een sectie. */
+.kv {
+  margin: var(--space-2) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.kv > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.kv dt {
+  font: var(--body-light);
+  color: var(--clay-60);
+}
+
+.kv dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* De uitleglijst is geen tabel maar tekst: waarde onder de term. */
+.kv.uitleg > div {
+  display: block;
+}
+
+.kv.uitleg dt {
+  font: var(--label-strong);
+  color: var(--clay-80);
+  margin-bottom: 1px;
+}
+
+.kv.uitleg dd {
+  font: var(--body-light);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--clay-60);
+  white-space: normal;
+  margin-bottom: var(--space-2);
+}
+
 /* ---------- Groen binnen 300 m (3-30-300) ---------- */
 .groen-card {
   background: var(--surface-sage, rgba(81, 214, 134, 0.09));
   border-radius: var(--radius-md, 10px);
-  padding: var(--space-3) var(--space-3) var(--space-2);
-  margin-bottom: var(--space-3);
-}
-
-.groen-card h3 {
-  margin-top: 0;
+  padding: var(--space-3);
 }
 
 .groen-score {
@@ -354,14 +511,39 @@ p {
   margin-top: var(--space-3);
 }
 
+.group-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  margin-left: calc(-1 * var(--space-2));
+  margin-right: calc(-1 * var(--space-2));
+  border-bottom: 1px solid var(--clay-20, rgba(0, 0, 0, 0.08));
+}
+
 .group-section-title {
   font: var(--body-light);
   text-transform: none;
   letter-spacing: 0.03em;
   color: var(--clay-60);
-  margin: 0 0 var(--space-1);
-  padding-bottom: var(--space-1);
-  border-bottom: 1px solid var(--clay-20, rgba(0, 0, 0, 0.08));
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Kopvinkje: zelfde formaat als de vinkjes eronder, zodat de kolom uitlijnt. */
+.alles-vink {
+  accent-color: var(--lavender-100);
+  width: 15px;
+  height: 15px;
+  flex: none;
+  cursor: pointer;
+}
+
+.acc-actie {
+  display: inline-flex;
+  flex: none;
 }
 
 /* ---------- Checkbox-rijen ---------- */

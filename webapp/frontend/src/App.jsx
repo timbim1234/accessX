@@ -180,6 +180,27 @@ export default function App() {
     }));
   }, []);
 
+  // Zet een hele lijst groepen aan of uit in één keer ("alles" / "geen" per
+  // sectie). Andere groepen blijven staan, zodat "alles" bij Functiemix de
+  // selectie bij Bereikbaarheid niet omgooit.
+  const setGroups = useCallback((keys, aan) => {
+    setSettings((s) => {
+      const set = new Set(s.poi_groups);
+      keys.forEach((k) => (aan ? set.add(k) : set.delete(k)));
+      return { ...s, poi_groups: [...set] };
+    });
+  }, []);
+
+  const setAnalyses = useCallback((keys, aan) => {
+    setSettings((s) => {
+      const set = new Set(s.analyses);
+      keys.forEach((k) => (aan ? set.add(k) : set.delete(k)));
+      // 2SFCA heeft bevolking nodig; zonder dat vinkje kan het niet aan staan.
+      if (!set.has("population")) set.delete("2sfca");
+      return { ...s, analyses: [...set] };
+    });
+  }, []);
+
   const toggleAnalysis = useCallback((key) => {
     setSettings((s) => {
       let analyses = s.analyses.includes(key)
@@ -493,7 +514,9 @@ export default function App() {
           onSettingsChange={updateSettings}
           onModeChange={handleModeChange}
           onToggleGroup={toggleGroup}
+          onSetGroups={setGroups}
           onToggleAnalysis={toggleAnalysis}
+          onSetAnalyses={setAnalyses}
           hasPolygon={Boolean(polygon)}
           areaKm2={areaKm2}
           canRun={canRun}

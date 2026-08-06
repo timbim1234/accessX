@@ -1,5 +1,6 @@
 import KpiCard from "./KpiCard.jsx";
 import LorenzChart from "./LorenzChart.jsx";
+import Sectie, { Methode } from "./Sectie.jsx";
 import { fmt, metricLabel } from "../metrics.js";
 
 // Client-side download via een tijdelijke <a download> (geen backend).
@@ -84,86 +85,24 @@ export default function Results({
   const baselineSummary = baselineResult?.summary || null;
   const hasScenario = Boolean(baselineResult);
   const placed = extraPois || [];
+  const zichtbarePoiGroepen = groupKeys.filter((k) => k in nPois);
+  const totaalPois = zichtbarePoiGroepen.reduce((n, k) => n + (nPois[k] || 0), 0);
+
+  // Welke kaartmetrieken zitten er in dit resultaat? Bepaalt welke uitleg
+  // zinvol is om te tonen.
+  const heeftMetriek = (prefix) =>
+    metricOptions.some((g) => g.options.some((o) => o.value.startsWith(prefix)));
 
   return (
     <section className="results">
       <h2>Resultaten</h2>
 
-      {summary && (
-        <KpiCard
-          summary={summary}
-          baselineSummary={hasScenario ? baselineSummary : null}
-          groupColorMap={groupColorMap}
-        />
-      )}
-
-      {groen ? (
-        <div className="groen-card">
-          <h3>Groen binnen {fmt(groen.norm_m, 0)} m</h3>
-          <div className="groen-score">
-            <strong>{fmt(groen.pct_binnen_norm, 0)}</strong>
-            <span className="unit">%</span>
-            <span className="groen-score-label">
-              van de {groen.gewogen ? "inwoners" : "hexes"} haalt de norm
-            </span>
-          </div>
-          <div className="groen-bar">
-            <div
-              className="groen-bar-fill"
-              style={{ width: `${Math.max(0, Math.min(100, groen.pct_binnen_norm))}%` }}
-            />
-          </div>
-          <p className="hint small">
-            Mediaan {fmt(groen.mediaan_afstand_m, 0)} m lopen naar de rand van het
-            dichtstbijzijnde groen van minstens {fmt(groen.min_area_m2 / 10000, 1)} ha.
-            {" "}
-            {fmt(groen.n_groenvlakken, 0)} groenvlakken, {fmt(groen.groen_ha, 0)} ha in
-            en om het gebied.
-          </p>
-        </div>
-      ) : null}
-
-      {bvo?.per_group?.length ? (
-        <div className="bvo">
-          <h3>Vloeroppervlakte (BAG)</h3>
-          <p className="hint small">
-            {fmt(bvo.m2_totaal, 0)} m² BVO in totaal. Buitenruimte zoals parken en
-            speeltuinen heeft geen verblijfsobject en dus terecht geen m².
-          </p>
-          <table className="bvo-table">
-            <tbody>
-              {bvo.per_group
-                .filter((g) => g.n_met_m2 > 0)
-                .map((g) => (
-                  <tr key={g.key}>
-                    <td>
-                      <span className="dot" style={{ background: groupColorMap[g.key] }} />
-                      {g.label}
-                      <span className="bvo-sub">
-                        typisch {fmt(g.m2_typisch, 0)} m²
-                        {g.adres_pct > 0 ? ` · ${fmt(g.adres_pct, 0)}% op adres` : ""}
-                        {" · "}
-                        {fmt(g.zeker_pct, 0)}% doel klopt
-                        {g.n_met_m2 < g.n ? ` · ${g.n_met_m2}/${g.n} gekoppeld` : ""}
-                      </span>
-                    </td>
-                    <td className="num">
-                      {fmt(g.m2_totaal, 0)}
-                      {g.n_uitschieters > 0 ? (
-                        <span
-                          className="bvo-flag"
-                          title={`${g.n_uitschieters} uitschieter(s): waarschijnlijk een heel complex dat als één verblijfsobject is geregistreerd. Kijk dan naar "typisch".`}
-                        >
-                          ⚠
-                        </span>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
+      <p className="results-context">
+        {fmt(meta.n_hexes, 0)} hexes · {fmt(meta.area_km2, 1)} km²
+        {meta.population_total !== null && meta.population_total !== undefined
+          ? ` · ${fmt(meta.population_total, 0)} inwoners`
+          : ""}
+      </p>
 
       <label className="field">
         <span>Kaartmetriek</span>
@@ -202,60 +141,256 @@ export default function Results({
         </div>
       )}
 
-      {gini && (
-        <div className="gini">
-          <h3>Gini per metriek</h3>
-          <table className="gini-table">
+      {summary && (
+        <Sectie
+          titel="15-minutenstad-score"
+          kern={
+            summary.composite_pct !== null && summary.composite_pct !== undefined
+              ? `${fmt(summary.composite_pct, 0)}%`
+              : null
+          }
+          open
+        >
+          <Methode>
+            Per categorie het aandeel {summary.weighted ? "inwoners" : "hexes"} dat
+            binnen {fmt(summary.max_minutes, 0)} minuten lopen minstens één voorziening
+            bereikt, gerouteerd over het echte straatnetwerk. De totaalscore is het
+            gemiddelde over de gekozen categorieën.
+          </Methode>
+          <KpiCard
+            summary={summary}
+            baselineSummary={hasScenario ? baselineSummary : null}
+            groupColorMap={groupColorMap}
+          />
+        </Sectie>
+      )}
+
+      {groen ? (
+        <Sectie
+          titel={`Groen binnen ${fmt(groen.norm_m, 0)} m`}
+          kern={`${fmt(groen.pct_binnen_norm, 0)}%`}
+        >
+          <Methode>
+            Loopafstand over het netwerk tot de <em>rand</em> van het dichtstbijzijnde
+            groengebied van minstens {fmt(groen.min_area_m2 / 10000, 1)} ha — niet
+            hemelsbreed, en niet tot het middelpunt: bij een groot park scheelt dat
+            honderden meters. Dit is de 300 m uit de 3-30-300-regel.
+          </Methode>
+          <div className="groen-card">
+            <div className="groen-score">
+              <strong>{fmt(groen.pct_binnen_norm, 0)}</strong>
+              <span className="unit">%</span>
+              <span className="groen-score-label">
+                van de {groen.gewogen ? "inwoners" : "hexes"} haalt de norm
+              </span>
+            </div>
+            <div className="groen-bar">
+              <div
+                className="groen-bar-fill"
+                style={{ width: `${Math.max(0, Math.min(100, groen.pct_binnen_norm))}%` }}
+              />
+            </div>
+            <dl className="kv">
+              <div>
+                <dt>Mediaan loopafstand</dt>
+                <dd>{fmt(groen.mediaan_afstand_m, 0)} m</dd>
+              </div>
+              <div>
+                <dt>Groenvlakken in en om het gebied</dt>
+                <dd>
+                  {fmt(groen.n_groenvlakken, 0)} · {fmt(groen.groen_ha, 0)} ha
+                </dd>
+              </div>
+            </dl>
+          </div>
+        </Sectie>
+      ) : null}
+
+      {bvo?.per_group?.length ? (
+        <Sectie
+          titel="Vloeroppervlakte (BAG)"
+          kern={`${fmt(bvo.m2_totaal, 0)} m²`}
+        >
+          <Methode>
+            Elke voorziening is gekoppeld aan een BAG-verblijfsobject, bij voorkeur op
+            adres en anders op ligging binnen het pand. <strong>Typisch</strong> is
+            aantal × mediaan: dat cijfer is ongevoelig voor complexen die als één
+            verblijfsobject geregistreerd staan. De ⚠ markeert precies zulke
+            uitschieters — staat die er, gebruik dan <em>typisch</em>. Buitenruimte
+            zoals parken en speeltuinen heeft geen verblijfsobject en dus terecht geen
+            m².
+          </Methode>
+          <table className="bvo-table">
             <tbody>
-              {Object.entries(gini).map(([k, v]) => (
-                <tr key={k}>
-                  <td>{metricLabel(k, presets)}</td>
-                  <td className="num">{fmt(v, 3, 3)}</td>
-                </tr>
-              ))}
+              {bvo.per_group
+                .filter((g) => g.n_met_m2 > 0)
+                .map((g) => (
+                  <tr key={g.key}>
+                    <td>
+                      <span className="dot" style={{ background: groupColorMap[g.key] }} />
+                      {g.label}
+                      <span className="bvo-sub">
+                        typisch {fmt(g.m2_typisch, 0)} m²
+                        {g.adres_pct > 0 ? ` · ${fmt(g.adres_pct, 0)}% op adres` : ""}
+                        {" · "}
+                        {fmt(g.zeker_pct, 0)}% doel klopt
+                        {g.n_met_m2 < g.n ? ` · ${g.n_met_m2}/${g.n} gekoppeld` : ""}
+                      </span>
+                    </td>
+                    <td className="num">
+                      {fmt(g.m2_totaal, 0)}
+                      {g.n_uitschieters > 0 ? (
+                        <span
+                          className="bvo-flag"
+                          title={`${g.n_uitschieters} uitschieter(s): waarschijnlijk een heel complex dat als één verblijfsobject is geregistreerd. Kijk dan naar "typisch".`}
+                        >
+                          ⚠
+                        </span>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
-          {equity.gini_weighted && <p className="hint small">Bevolkingsgewogen.</p>}
-        </div>
-      )}
+        </Sectie>
+      ) : null}
 
-      {lorenz && (
-        <div className="lorenz">
-          <h3>Lorenz-curves</h3>
-          <LorenzChart lorenz={lorenz} presets={presets} groupColorMap={groupColorMap} />
-        </div>
-      )}
+      {gini || lorenz ? (
+        <Sectie
+          titel="Verdeling & Gini"
+          kern={gini ? fmt(Object.values(gini)[0], 2, 2) : null}
+        >
+          <Methode>
+            Hoe gelijk de bereikbaarheid over het gebied verdeeld is. 0 betekent dat
+            iedereen evenveel bereikt, 1 dat alles bij één plek zit. De Lorenz-curve
+            toont dezelfde verdeling grafisch: hoe verder van de diagonaal, hoe
+            ongelijker.
+            {equity?.gini_weighted ? " Bevolkingsgewogen." : ""}
+          </Methode>
+          {gini && (
+            <table className="gini-table">
+              <tbody>
+                {Object.entries(gini).map(([k, v]) => (
+                  <tr key={k}>
+                    <td>{metricLabel(k, presets)}</td>
+                    <td className="num">{fmt(v, 3, 3)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {lorenz && (
+            <LorenzChart lorenz={lorenz} presets={presets} groupColorMap={groupColorMap} />
+          )}
+        </Sectie>
+      ) : null}
 
-      <div className="summary">
-        <h3>Samenvatting</h3>
-        <p>
-          {fmt(meta.n_hexes, 0)} hexes · {fmt(meta.area_km2, 1)} km²
-          {meta.population_total !== null && meta.population_total !== undefined
-            ? ` · ${fmt(meta.population_total, 0)} inwoners`
-            : ""}
-        </p>
-        <h4>Voorzieningen op de kaart</h4>
-        {groupKeys
-          .filter((k) => k in nPois)
-          .map((k) => (
-            <label key={k} className="check-row">
-              <input
-                type="checkbox"
-                checked={Boolean(poiVisible[k])}
-                onChange={() => onTogglePoi(k)}
-              />
-              <span className="dot" style={{ background: groupColorMap[k] }} />
-              <span>{presets.poi_groups[k].label}</span>
-              <span className="count">{fmt(nPois[k], 0)}</span>
-            </label>
-          ))}
+      <Sectie titel="Kaartmetrieken uitgelegd">
+        <Methode>
+          Wat de kiezer hierboven op de kaart zet. Alle afstanden zijn gerouteerd over
+          het loopnetwerk, niet hemelsbreed.
+        </Methode>
+        <dl className="kv uitleg">
+          {heeftMetriek("count_") && (
+            <div>
+              <dt>Aantal bereikbaar</dt>
+              <dd>
+                Hoeveel voorzieningen van die categorie er vanaf deze hex binnen de
+                tijdsdrempel te bereiken zijn. Telt stuks, niet omvang.
+              </dd>
+            </div>
+          )}
+          {heeftMetriek("nearest_cost_") && (
+            <div>
+              <dt>Minuten naar dichtstbijzijnde</dt>
+              <dd>
+                Reistijd naar de eerste voorziening van die categorie. Leeg als er
+                binnen de drempel geen is.
+              </dd>
+            </div>
+          )}
+          {heeftMetriek("hansen_") && (
+            <div>
+              <dt>Hansen</dt>
+              <dd>
+                Alle bereikbare voorzieningen bij elkaar opgeteld, maar hoe verder weg
+                hoe minder ze meetellen (afstandsverval). Eén voorziening om de hoek
+                weegt zwaarder dan drie op tien minuten.
+              </dd>
+            </div>
+          )}
+          {heeftMetriek("sfca_") && (
+            <div>
+              <dt>2SFCA</dt>
+              <dd>
+                Vraag tegen aanbod: voorzieningen worden verdeeld over iedereen die ze
+                kan bereiken. Een supermarkt die door 10.000 mensen wordt gedeeld
+                scoort lager dan dezelfde supermarkt met 500 gebruikers.
+              </dd>
+            </div>
+          )}
+          {heeftMetriek("bvo_hansen_") && (
+            <div>
+              <dt>Bereikbaar vloeroppervlak</dt>
+              <dd>
+                Zelfde rekenwijze als Hansen, maar elke voorziening telt mee voor haar
+                m² in plaats van als "1". Drie buurtsupers zijn dan iets anders dan
+                drie avondwinkels.
+              </dd>
+            </div>
+          )}
+          {heeftMetriek("groen_") && (
+            <div>
+              <dt>Loopafstand tot groen</dt>
+              <dd>
+                Meters lopen naar de rand van het dichtstbijzijnde groengebied; de
+                ja/nee-variant kleurt of dat binnen 300 m valt.
+              </dd>
+            </div>
+          )}
+          <div>
+            <dt>Bevolking (CBS)</dt>
+            <dd>Inwoners per hex uit het CBS-vierkantennet, als achtergrond bij de rest.</dd>
+          </div>
+        </dl>
+      </Sectie>
+
+      <Sectie
+        titel="Voorzieningen op de kaart"
+        kern={fmt(totaalPois, 0)}
+      >
+        <Methode>
+          Aan- en uitzetten van de stippen op de kaart. Het getal is het aantal
+          gevonden voorzieningen in het geanalyseerde gebied, inclusief de loopbuffer
+          eromheen.
+        </Methode>
+        {zichtbarePoiGroepen.map((k) => (
+          <label key={k} className="check-row">
+            <input
+              type="checkbox"
+              checked={Boolean(poiVisible[k])}
+              onChange={() => onTogglePoi(k)}
+            />
+            <span className="dot" style={{ background: groupColorMap[k] }} />
+            <span>{presets.poi_groups[k].label}</span>
+            <span className="count">{fmt(nPois[k], 0)}</span>
+          </label>
+        ))}
         {meta.n_extra_pois ? (
-          <p className="hint small">+ {fmt(meta.n_extra_pois, 0)} scenario-voorziening(en) meegerekend.</p>
+          <p className="hint small">
+            + {fmt(meta.n_extra_pois, 0)} scenario-voorziening(en) meegerekend.
+          </p>
         ) : null}
-      </div>
+      </Sectie>
 
-      <div className="whatif">
-        <h3>Wat-als scenario</h3>
+      <Sectie
+        titel="Wat-als scenario"
+        kern={placed.length ? `${placed.length} geplaatst` : null}
+      >
+        <Methode>
+          Plaats fictieve voorzieningen op de kaart en herbereken. Daarna kun je boven
+          wisselen tussen het scenario en het verschil met de basisanalyse.
+        </Methode>
         <label className="check-row">
           <input
             type="checkbox"
@@ -283,7 +418,10 @@ export default function Results({
           <div className="whatif-list">
             {placed.map((p, i) => (
               <div key={i} className="whatif-item">
-                <span className="dot" style={{ background: groupColorMap[p.category] || "#898781" }} />
+                <span
+                  className="dot"
+                  style={{ background: groupColorMap[p.category] || "#898781" }}
+                />
                 <span className="whatif-cat">
                   {presets?.poi_groups?.[p.category]?.label || p.category}
                 </span>
@@ -310,40 +448,53 @@ export default function Results({
         >
           Herbereken met scenario ({placed.length})
         </button>
-      </div>
+      </Sectie>
 
-      <div className="iso-row">
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={isoMode}
-            onChange={(e) => onIsoModeChange(e.target.checked)}
-          />
-          <span>🕐 Isochroon bij klik</span>
-        </label>
-        {isoLoading && <span className="spinner" />}
-        {hasIsochrone && (
-          <button type="button" className="link-btn" onClick={onClearIso}>
-            wis isochroon
+      <Sectie titel="Isochroon" kern={hasIsochrone ? "actief" : null}>
+        <Methode>
+          Klik op een hex en de kaart toont het gebied dat vanaf dat punt binnen de
+          tijdsdrempel te belopen is — de werkelijke vorm over het stratennet, niet
+          een cirkel.
+        </Methode>
+        <div className="iso-row">
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={isoMode}
+              onChange={(e) => onIsoModeChange(e.target.checked)}
+            />
+            <span>🕐 Isochroon bij klik</span>
+          </label>
+          {isoLoading && <span className="spinner" />}
+          {hasIsochrone && (
+            <button type="button" className="link-btn" onClick={onClearIso}>
+              wis isochroon
+            </button>
+          )}
+        </div>
+        {isoError && <p className="error small">{isoError}</p>}
+      </Sectie>
+
+      <Sectie titel="Exporteren">
+        <Methode>
+          Beide bestanden bevatten de hexes met alle berekende waarden; GeoJSON met
+          geometrie voor GIS, CSV zonder voor Excel.
+        </Methode>
+        <div className="export-row">
+          <button type="button" className="secondary-btn" onClick={() => exportGeoJSON(result)}>
+            Download GeoJSON
           </button>
-        )}
-      </div>
-      {isoError && <p className="error small">{isoError}</p>}
+          <button type="button" className="secondary-btn" onClick={() => exportCSV(result)}>
+            Download CSV
+          </button>
+        </div>
+      </Sectie>
 
       {(meta.warnings || []).map((w, i) => (
         <p key={i} className="warning small">
           {w}
         </p>
       ))}
-
-      <div className="export-row">
-        <button type="button" className="secondary-btn" onClick={() => exportGeoJSON(result)}>
-          Download GeoJSON
-        </button>
-        <button type="button" className="secondary-btn" onClick={() => exportCSV(result)}>
-          Download CSV
-        </button>
-      </div>
 
       <button type="button" className="secondary-btn" onClick={onNewAnalysis}>
         Nieuwe analyse
