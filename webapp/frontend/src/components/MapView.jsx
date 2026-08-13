@@ -83,6 +83,8 @@ export default function MapView({
   groupColorMap,
   poiVisible,
   onHexClick,
+  onPoiClick,
+  isoMode,
   isochrone,
   maxMinutes,
   whatIfMode,
@@ -143,11 +145,13 @@ export default function MapView({
         {isochrone?.rings && <IsochroneLayer data={isochrone} />}
         {result?.pois && (
           <PoiLayer
-            key={`poi-${resultKey}-${visKey}`}
+            key={`poi-${resultKey}-${visKey}-${isoMode ? "iso" : "gewoon"}`}
             data={result.pois}
             visible={poiVisible}
             groupColorMap={groupColorMap}
             groupLabels={groupLabels}
+            isoMode={isoMode}
+            onPoiClick={onPoiClick}
           />
         )}
         {extraPois?.length > 0 && (
@@ -170,6 +174,7 @@ export default function MapView({
           presets={presets}
           hasNulls={hasNulls}
           maxMinutes={maxMinutes}
+          isochrone={isochrone}
         />
       )}
     </div>

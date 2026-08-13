@@ -232,7 +232,10 @@ def job_result(job_id: str) -> Any:
 @app.get("/api/jobs/{job_id}/isochrone")
 def job_isochrone(
     job_id: str,
-    hex_id: str = Query(..., description="hex_id uit het resultaat"),
+    hex_id: Optional[str] = Query(default=None, description="hex_id uit het resultaat"),
+    lon: Optional[float] = Query(default=None, description="Lengtegraad vertrekpunt"),
+    lat: Optional[float] = Query(default=None, description="Breedtegraad vertrekpunt"),
+    label: Optional[str] = Query(default=None, description="Naam van het vertrekpunt"),
     interval: Optional[float] = Query(default=None, description="Ringinterval in minuten"),
 ) -> dict:
     job = store.get(job_id)
@@ -247,10 +250,28 @@ def job_isochrone(
         raise HTTPException(
             status_code=400, detail="interval moet groter dan 0 zijn."
         )
+    heeft_punt = lon is not None and lat is not None
+    if (hex_id is None) == (not heeft_punt):
+        raise HTTPException(
+            status_code=400,
+            detail="Geef óf hex_id, óf lon en lat als vertrekpunt.",
+        )
+    if heeft_punt and not analysis.point_in_nl(lon, lat):
+        raise HTTPException(
+            status_code=400, detail="Het vertrekpunt ligt buiten Nederland."
+        )
     max_minutes = float(job["params"]["max_minutes"])
     try:
         return analysis.compute_isochrone_rings(
-            job["graph"], job["hexes_m"], hex_id, max_minutes, interval
+            job["graph"],
+            job["hexes_m"],
+            max_minutes,
+            interval,
+            hex_id=hex_id,
+            point=(lon, lat) if heeft_punt else None,
+            label=label,
         )
     except KeyError as exc:
         raise HTTPException(status_code=400, detail=f"Onbekende hex_id: {hex_id}.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

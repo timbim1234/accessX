@@ -41,6 +41,12 @@ ox.settings.use_cache = True
 
 METRIC_EPSG = 28992  # RD New
 NL_BBOX = (3.2, 50.7, 7.3, 53.6)  # lon_min, lat_min, lon_max, lat_max
+
+
+def point_in_nl(lon: float, lat: float) -> bool:
+    """Ligt dit punt binnen de NL-bounding box? Grove check, geen landsgrens."""
+    lon_min, lat_min, lon_max, lat_max = NL_BBOX
+    return lon_min <= lon <= lon_max and lat_min <= lat <= lat_max
 MAX_BUFFER_M = 2500.0
 
 # ---------------------------------------------------------------------------
@@ -228,8 +234,7 @@ def validate_polygon(geom: dict) -> Tuple[gpd.GeoDataFrame, float]:
     if shp.is_empty:
         raise ValueError("Ongeldige polygoon: lege geometrie.")
     minx, miny, maxx, maxy = shp.bounds
-    lon_min, lat_min, lon_max, lat_max = NL_BBOX
-    if minx < lon_min or maxx > lon_max or miny < lat_min or maxy > lat_max:
+    if not (point_in_nl(minx, miny) and point_in_nl(maxx, maxy)):
         raise ValueError("Het getekende gebied ligt (deels) buiten Nederland.")
     aoi = gpd.GeoDataFrame(geometry=[shp], crs=4326)
     area_km2 = float(aoi.to_crs(METRIC_EPSG).area.sum()) / 1e6
@@ -1343,20 +1348,47 @@ def run_pipeline(params: dict, rep: Optional[NullReporter] = None) -> dict:
 def compute_isochrone_rings(
     graph: Any,
     hexes_m: gpd.GeoDataFrame,
-    hex_id: str,
     max_minutes: float,
     interval: Optional[float] = None,
+    *,
+    hex_id: Optional[str] = None,
+    point: Optional[Tuple[float, float]] = None,
+    label: Optional[str] = None,
 ) -> dict:
-    """Compute isochrone rings from a single hex. Raises KeyError for unknown hex_id.
+    """Isochroonringen vanaf een hex of vanaf een los punt (lon/lat in WGS84).
 
-    Returns {"hex_id": ..., "rings": FeatureCollection} with per-feature property
-    "threshold" (minutes), sorted large -> small so small rings render on top.
+    Een voorziening is net zo goed een vertrekpunt als een hex: "wat ligt er
+    binnen 15 minuten lopen vanaf déze school" is een andere vraag dan vanaf de
+    hex eromheen, en accessx.calculate_isochrones accepteert punten net zo goed
+    als vlakken.
+
+    Raises KeyError voor een onbekende hex_id, ValueError als er geen bruikbare
+    oorsprong is meegegeven.
+
+    Returns {"origin": {...}, "rings": FeatureCollection} met per feature de
+    property "threshold" (minuten), groot -> klein gesorteerd zodat de kleine
+    ringen bovenop renderen.
     """
-    sel = hexes_m[hexes_m["hex_id"] == hex_id]
-    if len(sel) == 0:
-        raise KeyError(hex_id)
     graph_crs = graph.graph.get("crs", METRIC_EPSG)
-    sel = sel.to_crs(graph_crs)
+    if hex_id is not None:
+        sel = hexes_m[hexes_m["hex_id"] == hex_id]
+        if len(sel) == 0:
+            raise KeyError(hex_id)
+        sel = sel.to_crs(graph_crs)
+        origin = {"type": "hex", "hex_id": hex_id, "label": label}
+    elif point is not None:
+        lon, lat = point
+        sel = gpd.GeoDataFrame(
+            {"hex_id": ["punt"]}, geometry=[Point(float(lon), float(lat))], crs=4326
+        ).to_crs(graph_crs)
+        origin = {
+            "type": "punt",
+            "lon": float(lon),
+            "lat": float(lat),
+            "label": label,
+        }
+    else:
+        raise ValueError("Geef een hex_id of een punt (lon/lat) als vertrekpunt.")
     iso = acx.calculate_isochrones(
         graph,
         sel,
@@ -1394,4 +1426,5 @@ def compute_isochrone_rings(
             }
         )
     rings = {"type": "FeatureCollection", "features": features}
-    return sanitize_json({"hex_id": hex_id, "rings": rings})
+    # hex_id blijft als losse sleutel staan voor bestaande frontend-code.
+    return sanitize_json({"hex_id": hex_id, "origin": origin, "rings": rings})

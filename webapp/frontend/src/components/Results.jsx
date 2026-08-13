@@ -57,6 +57,7 @@ export default function Results({
   isoLoading,
   isoError,
   hasIsochrone,
+  isochrone,
   onClearIso,
   onNewAnalysis,
   running,
@@ -86,6 +87,12 @@ export default function Results({
   const hasScenario = Boolean(baselineResult);
   const placed = extraPois || [];
   const zichtbarePoiGroepen = groupKeys.filter((k) => k in nPois);
+  // Waar het getoonde isochroon vandaan komt: de naam van de voorziening als
+  // die er is, anders het type vertrekpunt.
+  const isoOrigin = isochrone?.origin || null;
+  const isochroonLabel = hasIsochrone
+    ? isoOrigin?.label || (isoOrigin?.type === "punt" ? "vanaf voorziening" : "vanaf hex")
+    : null;
   const totaalPois = zichtbarePoiGroepen.reduce((n, k) => n + (nPois[k] || 0), 0);
 
   // Welke kaartmetrieken zitten er in dit resultaat? Bepaalt welke uitleg
@@ -450,12 +457,22 @@ export default function Results({
         </button>
       </Sectie>
 
-      <Sectie titel="Isochroon" kern={hasIsochrone ? "actief" : null}>
+      <Sectie
+        titel="Isochroon"
+        kern={isochroonLabel}
+        open={Boolean(isoMode || hasIsochrone)}
+      >
         <Methode>
-          Klik op een hex en de kaart toont het gebied dat vanaf dat punt binnen de
-          tijdsdrempel te belopen is — de werkelijke vorm over het stratennet, niet
-          een cirkel.
+          Klik op een hex of op een voorziening, en de kaart toont het gebied dat
+          vanaf dat punt binnen de tijdsdrempel te belopen is — de werkelijke vorm
+          over het stratennet, niet een cirkel. Vanaf een voorziening beantwoordt dat
+          de omgekeerde vraag: wie kan hier binnen de tijd komen?
         </Methode>
+        {isoMode && (
+          <p className="hint small">
+            De stippen op de kaart zijn nu aanklikbaar als vertrekpunt.
+          </p>
+        )}
         <div className="iso-row">
           <label className="check-row">
             <input

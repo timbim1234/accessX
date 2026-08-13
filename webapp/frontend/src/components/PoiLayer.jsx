@@ -6,7 +6,14 @@ import { GeoJSON } from "react-leaflet";
 // Leaflet rendert tooltip-strings als HTML; OSM-namen dus escapen.
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
-export default function PoiLayer({ data, visible, groupColorMap, groupLabels }) {
+export default function PoiLayer({
+  data,
+  visible,
+  groupColorMap,
+  groupLabels,
+  isoMode,
+  onPoiClick,
+}) {
   return (
     <GeoJSON
       data={data}
@@ -15,12 +22,17 @@ export default function PoiLayer({ data, visible, groupColorMap, groupLabels }) 
       pointToLayer={(f, latlng) =>
         L.circleMarker(latlng, {
           pane: "pois",
-          radius: 5,
+          // In isochroon-modus zijn de stippen zelf een vertrekpunt: iets
+          // groter en met een handje, zodat zichtbaar is dat ze aanklikbaar
+          // zijn. Anders blijven ze puur informatief.
+          radius: isoMode ? 7 : 5,
           fillColor: groupColorMap[f?.properties?.category] || "#898781",
           fillOpacity: 0.9,
           color: "#ffffff",
-          weight: 1.5,
+          weight: isoMode ? 2 : 1.5,
           opacity: 1,
+          interactive: true,
+          className: isoMode ? "poi-klikbaar" : undefined,
         })
       }
       onEachFeature={(f, layer) => {
@@ -35,7 +47,19 @@ export default function PoiLayer({ data, visible, groupColorMap, groupLabels }) 
                 p.doel_match ? "" : " (?)"
               }`
             : "";
-        layer.bindTooltip(`${esc(name)} — ${esc(label)}${esc(m2)}`);
+        const iso = isoMode ? " — klik voor isochroon" : "";
+        layer.bindTooltip(`${esc(name)} — ${esc(label)}${esc(m2)}${esc(iso)}`);
+        if (isoMode && onPoiClick) {
+          layer.on("click", (e) => {
+            // Niet doorgeven aan de hex eronder: anders komt er een tweede
+            // isochroon-verzoek vanaf de hex overheen.
+            L.DomEvent.stopPropagation(e);
+            const [lon, lat] = f?.geometry?.coordinates || [];
+            if (typeof lon === "number" && typeof lat === "number") {
+              onPoiClick({ lon, lat, label: p.name || label });
+            }
+          });
+        }
       }}
     />
   );

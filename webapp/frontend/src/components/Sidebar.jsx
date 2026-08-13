@@ -82,6 +82,7 @@ export default function Sidebar({
   isoLoading,
   isoError,
   hasIsochrone,
+  isochrone,
   onClearIso,
   onNewAnalysis,
   whatIfMode,
@@ -337,6 +338,7 @@ export default function Sidebar({
           isoLoading={isoLoading}
           isoError={isoError}
           hasIsochrone={hasIsochrone}
+          isochrone={isochrone}
           onClearIso={onClearIso}
           onNewAnalysis={onNewAnalysis}
           running={running}

@@ -404,13 +404,14 @@ export default function App() {
     setPoiVisible((v) => ({ ...v, [key]: !v[key] }));
   }, []);
 
-  const handleHexClick = useCallback(async (hexId) => {
+  // Eén pad voor beide vertrekpunten: een hex of een aangeklikte voorziening.
+  const fetchIsochrone = useCallback(async (oorsprong) => {
     if (!isoModeRef.current || !jobIdRef.current) return;
     const req = ++isoReqRef.current;
     setIsoLoading(true);
     setIsoError(null);
     try {
-      const data = await getIsochrone(jobIdRef.current, hexId, 5);
+      const data = await getIsochrone(jobIdRef.current, oorsprong, 5);
       if (req !== isoReqRef.current) return; // verouderde respons negeren
       setIsochrone(data);
     } catch (e) {
@@ -421,6 +422,16 @@ export default function App() {
       if (req === isoReqRef.current) setIsoLoading(false);
     }
   }, []);
+
+  const handleHexClick = useCallback(
+    (hexId) => fetchIsochrone({ hexId }),
+    [fetchIsochrone]
+  );
+
+  const handlePoiClick = useCallback(
+    (poi) => fetchIsochrone({ lon: poi.lon, lat: poi.lat, label: poi.label }),
+    [fetchIsochrone]
+  );
 
   const clearIsochrone = useCallback(() => {
     isoReqRef.current += 1; // in-flight isochroon-fetch invalideren
@@ -537,6 +548,7 @@ export default function App() {
           isoLoading={isoLoading}
           isoError={isoError}
           hasIsochrone={Boolean(isochrone)}
+          isochrone={isochrone}
           onClearIso={clearIsochrone}
           onNewAnalysis={newAnalysis}
           whatIfMode={whatIfMode}
@@ -564,6 +576,8 @@ export default function App() {
           groupColorMap={groupColorMap}
           poiVisible={poiVisible}
           onHexClick={handleHexClick}
+          onPoiClick={handlePoiClick}
+          isoMode={isoMode}
           isochrone={isochrone}
           maxMinutes={maxMinutesUsed}
           whatIfMode={whatIfMode}

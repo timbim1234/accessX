@@ -532,6 +532,11 @@ p {
   min-width: 0;
 }
 
+/* In isochroon-modus zijn de voorzieningen zelf een vertrekpunt. */
+.poi-klikbaar {
+  cursor: pointer;
+}
+
 /* Kopvinkje: zelfde formaat als de vinkjes eronder, zodat de kolom uitlijnt. */
 .alles-vink {
   accent-color: var(--lavender-100);
@@ -787,11 +792,21 @@ details.advanced[open] summary::before {
 }
 
 /* ---------- Kaart-legenda (floating) ---------- */
-.legend {
+/* De metriek- en isochroonlegenda stapelen rechtsonder; de wrapper positioneert,
+   de kaartjes zelf staan in de stroom zodat ze elkaar niet overlappen. */
+.legend-stack {
   position: absolute;
   right: var(--space-3);
   bottom: var(--space-6);
   z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  pointer-events: none;
+}
+
+.legend {
   background: var(--white);
   border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-4);
@@ -799,6 +814,16 @@ details.advanced[open] summary::before {
   color: var(--black);
   box-shadow: var(--shadow-float);
   max-width: 264px;
+  pointer-events: auto;
+}
+
+/* Isochroon: de kleur zit op de rand van de ring, dus toon een lijntje in
+   plaats van een vlak. */
+.swatch.line {
+  height: 4px;
+  border-radius: 2px;
+  border: none;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
 }
 
 .legend-title {

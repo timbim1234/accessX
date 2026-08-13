@@ -3,6 +3,13 @@
 // Sequentiële choropleth-ramp (CityMaker sky, licht -> donker = laag -> hoog).
 export const RAMP = ["#e5f4fd", "#b1ddfa", "#7dc6f6", "#38a7f0", "#1466a8"];
 
+// Isochronen krijgen een eigen wárme ramp. Ze liggen bovenop de blauwe
+// choropleth, dus met dezelfde sky-tinten vielen de ringen weg — zeker de
+// buitenste, die in RAMP bijna wit is. Volgorde: dichtbij = diep karmijn,
+// veraf = amber; alle vijf blijven verzadigd genoeg om op een lichte kaart én
+// op een luchtfoto te lezen.
+export const ISO_RAMP = ["#fbb040", "#f4813f", "#e5533e", "#bf2f4a", "#8e1b4e"];
+
 // Categoriale reservekleuren = CityMaker data-palet "strong"
 // (voor onbekende keys die niet in GROUP_COLORS staan).
 export const CAT_COLORS = [

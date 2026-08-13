@@ -41,9 +41,19 @@ export function getJobResult(jobId, signal) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/result`, { signal });
 }
 
-export function getIsochrone(jobId, hexId, interval = 5, signal) {
-  const q = `hex_id=${encodeURIComponent(hexId)}&interval=${encodeURIComponent(interval)}`;
-  return request(`/api/jobs/${encodeURIComponent(jobId)}/isochrone?${q}`, { signal });
+// Vertrekpunt is óf een hex ({ hexId }) óf een los punt ({ lon, lat, label }) —
+// dat laatste voor een isochroon vanaf een aangeklikte voorziening.
+export function getIsochrone(jobId, oorsprong, interval = 5, signal) {
+  const p = new URLSearchParams();
+  if (oorsprong?.hexId !== undefined && oorsprong?.hexId !== null) {
+    p.set("hex_id", oorsprong.hexId);
+  } else {
+    p.set("lon", oorsprong.lon);
+    p.set("lat", oorsprong.lat);
+    if (oorsprong.label) p.set("label", oorsprong.label);
+  }
+  p.set("interval", interval);
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/isochrone?${p}`, { signal });
 }
 
 // PDOK Locatieserver (via backend-proxy): suggesties bij een zoekterm.
