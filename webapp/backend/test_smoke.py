@@ -9,8 +9,12 @@ De gestarte job wordt NIET tot 'done' gepolld (kan netwerk vereisen).
 """
 from __future__ import annotations
 
+import io
 import json
 import sys
+import tempfile
+import zipfile
+from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
@@ -18,6 +22,7 @@ import pandas as pd
 from shapely.geometry import Point, Polygon, shape
 
 import analysis
+import export
 import local_osm
 import bag
 import poi_groups as pg
@@ -80,6 +85,48 @@ def _sum_count(result: dict, group: str) -> int:
         if isinstance(val, (int, float)):
             total += int(val)
     return total
+
+
+def _raises_export_error(result: dict, isochrone, fmt: str) -> bool:
+    """True als build_export netjes een ExportError geeft (geen ruwe crash)."""
+    try:
+        export.build_export(result, isochrone, fmt, "test")
+    except export.ExportError:
+        return True
+    except Exception:  # noqa: BLE001 - alles anders is een echte fout
+        return False
+    return False
+
+
+def _mini_result() -> tuple:
+    """Klein resultaat + isochroon-payload om de export offline te testen."""
+
+    def poly(x: float, y: float) -> dict:
+        return {"type": "Polygon", "coordinates": [[
+            [x, y], [x + 0.001, y], [x + 0.001, y + 0.001], [x, y + 0.001], [x, y],
+        ]]}
+
+    result = {
+        "hexes": {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "geometry": poly(5.10, 52.09), "properties": {
+                "hex_id": "89196908237ffff", "population": 120.5,
+                "count_daily_needs": 3, "nearest_cost_daily_needs_1": 4.2,
+                "hansen_voortgezet_onderwijs": 0.31, "groen_afstand_m": 210.0,
+                "hansen_total": None}}]},
+        "pois": {"type": "FeatureCollection", "features": [
+            {"type": "Feature",
+             "geometry": {"type": "Point", "coordinates": [5.1005, 52.0905]},
+             "properties": {"id": "node/1", "category": "cafe",
+                            "name": "Caf\u00e9 't Hoekje", "scenario": False}}]},
+    }
+    isochrone = {
+        "hex_id": "89196908237ffff",
+        "origin": {"type": "hex", "hex_id": "89196908237ffff", "label": None},
+        "rings": {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {"threshold": 15},
+             "geometry": poly(5.098, 52.088)}]},
+    }
+    return result, isochrone
 
 
 def main() -> int:
@@ -374,6 +421,93 @@ def main() -> int:
     else:
         print("SKIP local_osm data-checks — geen lokale data aanwezig")
 
+    # --- export: veldnamen, lagen en bestandsformaten ------------------------
+    kolommen = ["hex_id", "population", "groen_afstand_m", "hansen_total"]
+    for groep in pg.POI_GROUPS:
+        kolommen += [f"count_{groep}", f"nearest_cost_{groep}_1",
+                     f"hansen_{groep}", f"sfca_{groep}", f"bvo_hansen_{groep}"]
+    kort = export.shorten_field_names(kolommen)
+    check(
+        "export: shapefile-veldnamen uniek en max 10 tekens",
+        len(set(kort.values())) == len(kolommen)
+        and all(len(v) <= export.SHP_FIELD_MAX for v in kort.values()),
+        f"{len(kolommen)} kolommen, {len(set(kort.values()))} unieke namen",
+    )
+    check(
+        "export: metriekvoorvoegsel bepaalt de veldnaam",
+        kort["count_daily_needs"] == "n_dainee"
+        and kort["nearest_cost_daily_needs_1"] == "t_dainee"
+        and kort["count_cafe"] == "n_cafe",  # ook als de volle naam zou passen
+        f"count_daily_needs={kort['count_daily_needs']}, count_cafe={kort['count_cafe']}",
+    )
+
+    mini_result, mini_iso = _mini_result()
+    try:
+        data, naam, mediatype = export.build_export(mini_result, mini_iso, "gpkg", "test")
+        with tempfile.TemporaryDirectory() as tmp:
+            pad = Path(tmp) / naam
+            pad.write_bytes(data)
+            lagen = {laag: gpd.read_file(pad, layer=laag)
+                     for laag in (export.LAYER_HEXES, export.LAYER_POIS, export.LAYER_ISO)}
+        check(
+            "export gpkg: drie lagen in RD New",
+            naam == "test.gpkg"
+            and mediatype.startswith("application/geopackage")
+            and all(len(g) == 1 and g.crs.to_epsg() == export.EXPORT_EPSG
+                    for g in lagen.values()),
+            ", ".join(f"{k}={len(v)}" for k, v in lagen.items()),
+        )
+        check(
+            "export gpkg: volledige veldnamen en isochroon-vertrekpunt",
+            "count_daily_needs" in lagen[export.LAYER_HEXES].columns
+            and lagen[export.LAYER_POIS]["name"].iloc[0] == "Caf\u00e9 't Hoekje"
+            and lagen[export.LAYER_ISO]["start_hex"].iloc[0] == "89196908237ffff",
+            f"iso-kolommen={list(lagen[export.LAYER_ISO].columns)}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        check("export gpkg: geen fout", False, repr(exc))
+
+    try:
+        data, naam, mediatype = export.build_export(mini_result, mini_iso, "shp", "test")
+        with tempfile.TemporaryDirectory() as tmp:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                zf.extractall(tmp)
+            bestanden = sorted(item.name for item in Path(tmp).iterdir())
+            hexes = gpd.read_file(Path(tmp) / "hexes.shp")
+            velden = (Path(tmp) / "velden.csv").read_text(encoding="utf-8-sig")
+        verwacht = {f"{laag}.{ext}"
+                    for laag in ("hexes", "voorzieningen", "isochroon")
+                    for ext in ("shp", "shx", "dbf", "prj", "cpg")}
+        check(
+            "export shp: zip met drie shapefiles + velden.csv",
+            naam == "test_shp.zip" and mediatype == "application/zip"
+            and verwacht <= set(bestanden) and "velden.csv" in bestanden,
+            f"ontbreekt: {sorted(verwacht - set(bestanden))}",
+        )
+        check(
+            "export shp: veldnamen afgekort en terug te vinden in velden.csv",
+            "n_dainee" in hexes.columns
+            and "hexes;n_dainee;count_daily_needs" in velden
+            and "\r\r\n" not in velden,  # geen dubbele regeleindes
+            f"velden={[c for c in hexes.columns if c != 'geometry']}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        check("export shp: geen fout", False, repr(exc))
+
+    check(
+        "export: leeg resultaat -> ExportError",
+        _raises_export_error({"hexes": {"features": []}, "pois": None}, None, "gpkg"),
+    )
+    check(
+        "export: onbekend formaat -> ExportError",
+        _raises_export_error(mini_result, None, "kml"),
+    )
+    check(
+        "export: kapotte isochroon-payload wordt genegeerd",
+        [naam for naam, _ in export._layers(mini_result, {"rommel": 1})]
+        == [export.LAYER_HEXES, export.LAYER_POIS],
+    )
+
     with TestClient(app) as client:
         # --- health ---------------------------------------------------------
         r = client.get("/api/health")
@@ -397,6 +531,14 @@ def main() -> int:
             and body.get("limits", {}).get("max_area_km2") == 250
             and body.get("limits", {}).get("warn_area_km2") == 40,
             f"status={r.status_code}, limits={body.get('limits')}",
+        )
+
+        # --- export van een onbekende job -> 404 -----------------------------
+        r = client.post("/api/jobs/bestaatniet/export", json={"format": "gpkg"})
+        check(
+            "POST /api/jobs/{id}/export onbekende job -> 404",
+            r.status_code == 404,
+            f"status={r.status_code}, detail={r.json().get('detail', '')!r}",
         )
 
         # --- polygoon buiten NL -> 400 ---------------------------------------

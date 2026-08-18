@@ -326,6 +326,7 @@ export default function Sidebar({
       {result && (
         <Results
           result={result}
+          jobId={job?.job_id}
           presets={presets}
           metricOptions={metricOptions}
           metric={metric}

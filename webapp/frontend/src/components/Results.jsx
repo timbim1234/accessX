@@ -1,3 +1,6 @@
+import { useState } from "react";
+
+import { postExport } from "../api.js";
 import KpiCard from "./KpiCard.jsx";
 import LorenzChart from "./LorenzChart.jsx";
 import Sectie, { Methode } from "./Sectie.jsx";
@@ -45,6 +48,7 @@ function exportCSV(result) {
 
 export default function Results({
   result,
+  jobId,
   presets,
   metricOptions,
   metric,
@@ -94,6 +98,29 @@ export default function Results({
     ? isoOrigin?.label || (isoOrigin?.type === "punt" ? "vanaf voorziening" : "vanaf hex")
     : null;
   const totaalPois = zichtbarePoiGroepen.reduce((n, k) => n + (nPois[k] || 0), 0);
+
+  // GPKG/SHP maakt de backend met GDAL (kan niet in de browser). Het getoonde
+  // isochroon gaat mee in de request omdat het niet in het jobresultaat zit.
+  const [exportBezig, setExportBezig] = useState(null); // "gpkg" | "shp" | null
+  const [exportFout, setExportFout] = useState(null);
+
+  async function downloadBestand(fmt) {
+    if (!jobId || exportBezig) return;
+    setExportBezig(fmt);
+    setExportFout(null);
+    try {
+      const { blob, filename } = await postExport(jobId, {
+        format: fmt,
+        isochrone: isochrone || null,
+      });
+      downloadBlob(filename || `accessx_export.${fmt === "gpkg" ? "gpkg" : "zip"}`, blob);
+    } catch (e) {
+      console.error("Export mislukt:", e);
+      setExportFout(`Export mislukt: ${e.message}`);
+    } finally {
+      setExportBezig(null);
+    }
+  }
 
   // Welke kaartmetrieken zitten er in dit resultaat? Bepaalt welke uitleg
   // zinvol is om te tonen.
@@ -494,9 +521,36 @@ export default function Results({
 
       <Sectie titel="Exporteren">
         <Methode>
-          Beide bestanden bevatten de hexes met alle berekende waarden; GeoJSON met
-          geometrie voor GIS, CSV zonder voor Excel.
+          GeoPackage en Shapefile bevatten drie lagen in RD New (EPSG:28992):
+          de hexes met alle berekende waarden, de voorzieningen als punten en
+          — als er een isochroon open staat — de ringen daarvan. GeoJSON en
+          CSV bevatten alleen de hexes (WGS84, resp. zonder geometrie).
         </Methode>
+        <p className="small">
+          Lagen in deze export: hexes, voorzieningen
+          {hasIsochrone
+            ? `, isochroon (${isochroonLabel})`
+            : " — er staat geen isochroon open"}
+          .
+        </p>
+        <div className="export-row">
+          <button
+            type="button"
+            className="secondary-btn"
+            disabled={!jobId || Boolean(exportBezig)}
+            onClick={() => downloadBestand("gpkg")}
+          >
+            {exportBezig === "gpkg" ? "Bezig..." : "GeoPackage (.gpkg)"}
+          </button>
+          <button
+            type="button"
+            className="secondary-btn"
+            disabled={!jobId || Boolean(exportBezig)}
+            onClick={() => downloadBestand("shp")}
+          >
+            {exportBezig === "shp" ? "Bezig..." : "Shapefile (.zip)"}
+          </button>
+        </div>
         <div className="export-row">
           <button type="button" className="secondary-btn" onClick={() => exportGeoJSON(result)}>
             Download GeoJSON
@@ -505,6 +559,7 @@ export default function Results({
             Download CSV
           </button>
         </div>
+        {exportFout && <p className="error small">{exportFout}</p>}
       </Sectie>
 
       {(meta.warnings || []).map((w, i) => (

@@ -11,12 +11,13 @@ from typing import Any, List, Literal, Optional
 import geopandas as gpd
 import requests
 import shapely.wkt
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from shapely.geometry import mapping
 
 import analysis
+import export
 from jobs import JobStore
 
 # PDOK Locatieserver (free, no API key). Used to search + load NL areas.
@@ -54,6 +55,18 @@ class AnalyzeRequest(BaseModel):
     beta: float = Field(default=0.15, gt=0)
     sfca_decay: Literal["binary", "exp"] = "exp"
     extra_pois: List[dict] = Field(default_factory=list)
+
+
+class ExportRequest(BaseModel):
+    """Body van POST /api/jobs/{job_id}/export.
+
+    Het isochroon zit niet in het jobresultaat (het wordt on-demand berekend),
+    dus stuurt de frontend het getoonde isochroon mee zodat de export exact
+    laat zien wat er op de kaart staat.
+    """
+
+    format: Literal["gpkg", "shp"] = "gpkg"
+    isochrone: Optional[dict] = None
 
 
 @app.get("/api/health")
@@ -275,3 +288,27 @@ def job_isochrone(
         raise HTTPException(status_code=400, detail=f"Onbekende hex_id: {hex_id}.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/export")
+def job_export(job_id: str, req: ExportRequest) -> Response:
+    """Hexes, voorzieningen en (optioneel) het isochroon als GPKG of SHP-zip."""
+    job = store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Onbekende job.")
+    if job["status"] != "done" or not job["result"]:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Resultaat nog niet beschikbaar (status: {job['status']}).",
+        )
+    try:
+        data, filename, mediatype = export.build_export(
+            job["result"], req.isochrone, req.format, f"accessx_{job_id}"
+        )
+    except export.ExportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(
+        content=data,
+        media_type=mediatype,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

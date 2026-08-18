@@ -51,8 +51,25 @@ De venv is aangemaakt met: `python -m venv C:\Users\tim\.venvs\accessx` gevolgd 
 - **Gebieden laden** — PDOK Locatieserver-proxy: `GET /api/geocode?q=` (suggesties)
   en `GET /api/area/{id}` (grens als GeoJSON + oppervlak). Gebiedslimiet staat op
   250 km² zodat een hele gemeente past.
-- **Export** — download de hexresultaten als GeoJSON of `;`-gescheiden CSV
-  (client-side, voor delen of import in CityMaker/GIS).
+- **Export** — vier knoppen onder "Exporteren":
+  - **GeoPackage (.gpkg)** en **Shapefile (.zip)** gaan via de backend
+    (`POST /api/jobs/{job_id}/export`, body `{format, isochrone}`) en bevatten
+    drie lagen in **RD New (EPSG:28992)**: `hexes` (alle berekende waarden),
+    `voorzieningen` (POI-punten) en `isochroon` (de ringen van het isochroon dat
+    op dat moment op de kaart staat; de frontend stuurt dat mee omdat het niet
+    in het jobresultaat zit). Lege lagen blijven weg.
+  - **GeoJSON** en `;`-gescheiden **CSV** blijven client-side en bevatten alleen
+    de hexes (WGS84, resp. zonder geometrie).
+
+  Shapefile staat maar 10 tekens per veldnaam toe. `export.shorten_field_names`
+  kort daarom af op het metriekvoorvoegsel — `n_` (aantal), `t_` (reistijd),
+  `h_` (Hansen), `s_` (2SFCA), `bh_` (Hansen op vloeroppervlak) — plus een
+  6-letterige groepscode, zodat `n_detkls`/`t_detkls`/`h_detkls` herkenbaar bij
+  dezelfde categorie horen. Dat gebeurt ook als de volledige naam nét zou
+  passen, anders staat `count_cafe` naast `n_dainee` in dezelfde tabel. De zip
+  bevat een `velden.csv` die elke afkorting terugvertaalt en een `LEESMIJ.txt`.
+  De isochroon-kolommen (`start_type`, `start_naam`, `start_hex`, `start_lon`,
+  `start_lat`) zijn bewust ≤ 10 tekens en blijven dus onverkort.
 
 ## Wat draait er per analyse?
 
